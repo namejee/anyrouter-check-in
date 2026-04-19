@@ -50,6 +50,14 @@ def generate_balance_hash(balances):
 	return hashlib.sha256(balance_json.encode('utf-8')).hexdigest()[:16]
 
 
+def summarize_response_body(body: str, limit: int = 160) -> str:
+	"""将响应体压缩成便于日志定位的短文本"""
+	compact_body = ' '.join(body.split())
+	if not compact_body:
+		return '<empty>'
+	return compact_body[:limit] + ('...' if len(compact_body) > limit else '')
+
+
 def parse_cookies(cookies_data):
 	"""解析 cookies 数据"""
 	if isinstance(cookies_data, dict):
@@ -134,19 +142,28 @@ def get_user_info(client, headers, user_info_url: str):
 	try:
 		response = client.get(user_info_url, headers=headers, timeout=30)
 
-		if response.status_code == 200:
+		if response.status_code != 200:
+			return {'success': False, 'error': f'Failed to get user info: HTTP {response.status_code}'}
+
+		try:
 			data = response.json()
-			if data.get('success'):
-				user_data = data.get('data', {})
-				quota = round(user_data.get('quota', 0) / 500000, 2)
-				used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
-				return {
-					'success': True,
-					'quota': quota,
-					'used_quota': used_quota,
-					'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
-				}
-		return {'success': False, 'error': f'Failed to get user info: HTTP {response.status_code}'}
+		except json.JSONDecodeError:
+			body_preview = summarize_response_body(response.text)
+			return {'success': False, 'error': f'Failed to parse user info response: {body_preview}'}
+
+		if data.get('success'):
+			user_data = data.get('data', {})
+			quota = round(user_data.get('quota', 0) / 500000, 2)
+			used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
+			return {
+				'success': True,
+				'quota': quota,
+				'used_quota': used_quota,
+				'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
+			}
+
+		error_msg = data.get('msg', data.get('message', summarize_response_body(response.text)))
+		return {'success': False, 'error': f'Failed to get user info: {error_msg}'}
 	except Exception as e:
 		return {'success': False, 'error': f'Failed to get user info: {str(e)[:50]}...'}
 
@@ -156,11 +173,31 @@ async def prepare_cookies(account_name: str, provider_config, user_cookies: dict
 	waf_cookies = {}
 
 	if provider_config.needs_waf_cookies():
-		login_url = f'{provider_config.domain}{provider_config.login_path}'
-		waf_cookies = await get_waf_cookies_with_playwright(account_name, login_url, provider_config.waf_cookie_names)
-		if not waf_cookies:
-			print(f'[FAILED] {account_name}: Unable to get WAF cookies')
-			return None
+		required_waf_cookies = provider_config.waf_cookie_names or []
+		user_supplied_waf_cookies = {name: user_cookies[name] for name in required_waf_cookies if user_cookies.get(name)}
+		missing_waf_cookies = [name for name in required_waf_cookies if name not in user_supplied_waf_cookies]
+
+		if not missing_waf_cookies and user_supplied_waf_cookies:
+			print(f'[INFO] {account_name}: Using WAF cookies from account configuration')
+			waf_cookies = user_supplied_waf_cookies
+		else:
+			if user_supplied_waf_cookies:
+				print(
+					f'[INFO] {account_name}: Reusing {len(user_supplied_waf_cookies)} '
+					f'user-provided WAF cookie(s), fetching {len(missing_waf_cookies)} missing cookie(s)'
+				)
+
+			login_url = f'{provider_config.domain}{provider_config.login_path}'
+			fetched_waf_cookies = await get_waf_cookies_with_playwright(
+				account_name,
+				login_url,
+				missing_waf_cookies or required_waf_cookies,
+			)
+			if not fetched_waf_cookies:
+				print(f'[FAILED] {account_name}: Unable to get WAF cookies')
+				return None
+
+			waf_cookies = {**fetched_waf_cookies, **user_supplied_waf_cookies}
 	else:
 		print(f'[INFO] {account_name}: Bypass WAF not required, using user cookies directly')
 
@@ -309,10 +346,18 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			user_info_after = get_user_info(client, headers, user_info_url)
 			return success, user_info_before, user_info_after
 		else:
-			print(f'[INFO] {account_name}: Check-in completed automatically (triggered by user info request)')
+			print(f'[INFO] {account_name}: Verifying automatic check-in via user info request')
+			await asyncio.sleep(1)
 			# 自动签到的情况，再次获取用户信息
 			user_info_after = get_user_info(client, headers, user_info_url)
-			return True, user_info_before, user_info_after
+			if user_info_after and user_info_after.get('success'):
+				print(f'[SUCCESS] {account_name}: Automatic check-in verified')
+				return True, user_info_before, user_info_after
+
+			error_msg = user_info_after.get('error', 'Unknown error') if user_info_after else 'Unknown error'
+			print(f'[FAILED] {account_name}: Automatic check-in could not be verified - {error_msg}')
+			print(f'[INFO] {account_name}: This usually means cookies expired or the site now requires re-login')
+			return False, user_info_before, user_info_after
 
 	except Exception as e:
 		print(f'[FAILED] {account_name}: Error occurred during check-in process - {str(e)[:50]}...')

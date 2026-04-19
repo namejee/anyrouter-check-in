@@ -3,7 +3,10 @@
     "name": "账号1",
     "provider": "anyrouter.top",
     "cookies": {
-      "session": "session值"
+      "session": "session值",
+      "acw_tc": "可选，建议一起填写",
+      "cdn_sec_tc": "可选，建议一起填写",
+      "acw_sc__v2": "可选，建议一起填写"
     },
     "api_user": "用户值"
   },
@@ -19,7 +22,8 @@
     "name": "agentrouter账号",
     "provider": "agentrouter.org",
     "cookies": {
-      "session": "session值"
+      "session": "session值",
+      "acw_tc": "可选，建议一起填写"
     },
     "api_user": "用户值"
   }

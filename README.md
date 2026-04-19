@@ -44,6 +44,13 @@
 5. 找到 "Cookies" 选项
 6. 复制所有 cookies
 
+如果你是在 GitHub Actions 中运行，且站点开启了 WAF/人机校验，建议把相关 WAF cookies 也一起写进 `cookies`：
+
+- `anyrouter`：建议额外填写 `acw_tc`、`cdn_sec_tc`、`acw_sc__v2`
+- `agentrouter`：建议额外填写 `acw_tc`
+
+脚本会优先复用你提供的这些 cookies；如果没有提供，才会尝试在运行时用 Playwright 自动获取。
+
 #### 获取 API User：
 
 按照下方图片教程操作获得。
@@ -203,7 +210,8 @@ python config/convert_cookie.py
     "name": "AgentRouter 备用",
     "provider": "agentrouter",
     "cookies": {
-      "session": "xyz789session"
+      "session": "xyz789session",
+      "acw_tc": "可选，建议一起填写"
     },
     "api_user": "user456"
   }
