@@ -58,6 +58,23 @@ def summarize_response_body(body: str, limit: int = 160) -> str:
 	return compact_body[:limit] + ('...' if len(compact_body) > limit else '')
 
 
+async def launch_playwright_context(playwright, user_data_dir: str):
+	"""创建带统一指纹配置的 Playwright 上下文"""
+	return await playwright.chromium.launch_persistent_context(
+		user_data_dir=user_data_dir,
+		headless=False,
+		user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
+		viewport={'width': 1920, 'height': 1080},
+		args=[
+			'--disable-blink-features=AutomationControlled',
+			'--disable-dev-shm-usage',
+			'--disable-web-security',
+			'--disable-features=VizDisplayCompositor',
+			'--no-sandbox',
+		],
+	)
+
+
 def parse_cookies(cookies_data):
 	"""解析 cookies 数据"""
 	if isinstance(cookies_data, dict):
@@ -81,19 +98,7 @@ async def get_waf_cookies_with_playwright(account_name: str, login_url: str, req
 		import tempfile
 
 		with tempfile.TemporaryDirectory() as temp_dir:
-			context = await p.chromium.launch_persistent_context(
-				user_data_dir=temp_dir,
-				headless=False,
-				user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
-				viewport={'width': 1920, 'height': 1080},
-				args=[
-					'--disable-blink-features=AutomationControlled',
-					'--disable-dev-shm-usage',
-					'--disable-web-security',
-					'--disable-features=VizDisplayCompositor',
-					'--no-sandbox',
-				],
-			)
+			context = await launch_playwright_context(p, temp_dir)
 
 			page = await context.new_page()
 
@@ -137,35 +142,127 @@ async def get_waf_cookies_with_playwright(account_name: str, login_url: str, req
 				return None
 
 
+def parse_user_info_response(status_code: int, response_text: str):
+	"""解析用户信息接口响应"""
+	if status_code != 200:
+		return {'success': False, 'error': f'Failed to get user info: HTTP {status_code}'}
+
+	try:
+		data = json.loads(response_text)
+	except json.JSONDecodeError:
+		body_preview = summarize_response_body(response_text)
+		return {'success': False, 'error': f'Failed to parse user info response: {body_preview}'}
+
+	if data.get('success'):
+		user_data = data.get('data', {})
+		quota = round(user_data.get('quota', 0) / 500000, 2)
+		used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
+		return {
+			'success': True,
+			'quota': quota,
+			'used_quota': used_quota,
+			'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
+		}
+
+	error_msg = data.get('msg', data.get('message', summarize_response_body(response_text)))
+	return {'success': False, 'error': f'Failed to get user info: {error_msg}'}
+
+
 def get_user_info(client, headers, user_info_url: str):
-	"""获取用户信息"""
+	"""通过 httpx 获取用户信息"""
 	try:
 		response = client.get(user_info_url, headers=headers, timeout=30)
-
-		if response.status_code != 200:
-			return {'success': False, 'error': f'Failed to get user info: HTTP {response.status_code}'}
-
-		try:
-			data = response.json()
-		except json.JSONDecodeError:
-			body_preview = summarize_response_body(response.text)
-			return {'success': False, 'error': f'Failed to parse user info response: {body_preview}'}
-
-		if data.get('success'):
-			user_data = data.get('data', {})
-			quota = round(user_data.get('quota', 0) / 500000, 2)
-			used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
-			return {
-				'success': True,
-				'quota': quota,
-				'used_quota': used_quota,
-				'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
-			}
-
-		error_msg = data.get('msg', data.get('message', summarize_response_body(response.text)))
-		return {'success': False, 'error': f'Failed to get user info: {error_msg}'}
+		return parse_user_info_response(response.status_code, response.text)
 	except Exception as e:
 		return {'success': False, 'error': f'Failed to get user info: {str(e)[:50]}...'}
+
+
+async def fetch_user_info_in_browser(page, provider_config, api_user: str):
+	"""通过浏览器上下文请求用户信息，绕过需要 JS 执行的 WAF 挑战"""
+	user_info_url = f'{provider_config.domain}{provider_config.user_info_path}'
+	headers = {
+		'Accept': 'application/json, text/plain, */*',
+		'X-Requested-With': 'XMLHttpRequest',
+		provider_config.api_user_key: api_user,
+	}
+
+	result = await page.evaluate(
+		"""async ({ url, headers }) => {
+			const response = await fetch(url, {
+				method: 'GET',
+				headers,
+				credentials: 'include',
+			});
+			return {
+				status: response.status,
+				text: await response.text(),
+			};
+		}""",
+		{'url': user_info_url, 'headers': headers},
+	)
+
+	return parse_user_info_response(result['status'], result['text'])
+
+
+async def execute_automatic_check_in_with_playwright(
+	account_name: str,
+	provider_config,
+	user_cookies: dict,
+	api_user: str,
+):
+	"""在浏览器上下文中执行自动签到并验证结果"""
+	print(f'[PROCESSING] {account_name}: Starting browser-based automatic check-in...')
+
+	async with async_playwright() as p:
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as temp_dir:
+			context = await launch_playwright_context(p, temp_dir)
+			page = await context.new_page()
+
+			try:
+				auth_cookie_names = set(user_cookies.keys()) - set(provider_config.waf_cookie_names or [])
+				auth_cookies = [
+					{'name': name, 'value': user_cookies[name], 'url': provider_config.domain, 'path': '/'}
+					for name in auth_cookie_names
+					if user_cookies.get(name)
+				]
+				if auth_cookies:
+					await context.add_cookies(auth_cookies)
+
+				login_url = f'{provider_config.domain}{provider_config.login_path}'
+				print(f'[PROCESSING] {account_name}: Opening login page in browser context...')
+				await page.goto(login_url, wait_until='networkidle')
+
+				try:
+					await page.wait_for_function('document.readyState === "complete"', timeout=5000)
+				except Exception:
+					await page.wait_for_timeout(3000)
+
+				user_info_before = await fetch_user_info_in_browser(page, provider_config, api_user)
+				if user_info_before and user_info_before.get('success'):
+					print(user_info_before['display'])
+				elif user_info_before:
+					print(user_info_before.get('error', 'Unknown error'))
+
+				print(f'[INFO] {account_name}: Verifying automatic check-in via browser user info request')
+				await asyncio.sleep(1)
+
+				user_info_after = await fetch_user_info_in_browser(page, provider_config, api_user)
+				if user_info_after and user_info_after.get('success'):
+					print(f'[SUCCESS] {account_name}: Automatic check-in verified in browser context')
+					await context.close()
+					return True, user_info_before, user_info_after
+
+				error_msg = user_info_after.get('error', 'Unknown error') if user_info_after else 'Unknown error'
+				print(f'[FAILED] {account_name}: Automatic check-in could not be verified - {error_msg}')
+				print(f'[INFO] {account_name}: This usually means cookies expired or the site now requires re-login')
+				await context.close()
+				return False, user_info_before, user_info_after
+			except Exception as e:
+				print(f'[FAILED] {account_name}: Browser-based automatic check-in error - {str(e)[:50]}...')
+				await context.close()
+				return False, None, None
 
 
 async def prepare_cookies(account_name: str, provider_config, user_cookies: dict) -> dict | None:
@@ -346,6 +443,15 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			user_info_after = get_user_info(client, headers, user_info_url)
 			return success, user_info_before, user_info_after
 		else:
+			if provider_config.needs_waf_cookies() and not (user_info_before and user_info_before.get('success')):
+				print(f'[INFO] {account_name}: HTTP verification blocked, retrying in browser context')
+				return await execute_automatic_check_in_with_playwright(
+					account_name,
+					provider_config,
+					user_cookies,
+					account.api_user,
+				)
+
 			print(f'[INFO] {account_name}: Verifying automatic check-in via user info request')
 			await asyncio.sleep(1)
 			# 自动签到的情况，再次获取用户信息
@@ -353,6 +459,15 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			if user_info_after and user_info_after.get('success'):
 				print(f'[SUCCESS] {account_name}: Automatic check-in verified')
 				return True, user_info_before, user_info_after
+
+			if provider_config.needs_waf_cookies():
+				print(f'[INFO] {account_name}: HTTP verification still blocked, retrying in browser context')
+				return await execute_automatic_check_in_with_playwright(
+					account_name,
+					provider_config,
+					user_cookies,
+					account.api_user,
+				)
 
 			error_msg = user_info_after.get('error', 'Unknown error') if user_info_after else 'Unknown error'
 			print(f'[FAILED] {account_name}: Automatic check-in could not be verified - {error_msg}')
@@ -521,7 +636,7 @@ async def main():
 		print('[INFO] All accounts successful and no balance changes detected, notification skipped')
 
 	# 设置退出码
-	sys.exit(0 if success_count > 0 else 1)
+	sys.exit(0 if success_count == total_count else 1)
 
 
 def run_main():
