@@ -223,7 +223,7 @@ async def execute_automatic_check_in_with_playwright(
 			try:
 				auth_cookie_names = set(user_cookies.keys()) - set(provider_config.waf_cookie_names or [])
 				auth_cookies = [
-					{'name': name, 'value': user_cookies[name], 'url': provider_config.domain, 'path': '/'}
+					{'name': name, 'value': user_cookies[name], 'url': provider_config.domain}
 					for name in auth_cookie_names
 					if user_cookies.get(name)
 				]
