@@ -178,30 +178,45 @@ def get_user_info(client, headers, user_info_url: str):
 
 
 async def fetch_user_info_in_browser(page, provider_config, api_user: str):
-	"""通过浏览器上下文请求用户信息，绕过需要 JS 执行的 WAF 挑战"""
+	"""通过浏览器页面导航请求用户信息，确保 WAF 挑战脚本能真正执行"""
 	user_info_url = f'{provider_config.domain}{provider_config.user_info_path}'
 	headers = {
 		'Accept': 'application/json, text/plain, */*',
-		'X-Requested-With': 'XMLHttpRequest',
 		provider_config.api_user_key: api_user,
 	}
 
-	result = await page.evaluate(
-		"""async ({ url, headers }) => {
-			const response = await fetch(url, {
-				method: 'GET',
-				headers,
-				credentials: 'include',
-			});
-			return {
-				status: response.status,
-				text: await response.text(),
-			};
-		}""",
-		{'url': user_info_url, 'headers': headers},
-	)
+	await page.context.set_extra_http_headers(headers)
 
-	return parse_user_info_response(result['status'], result['text'])
+	last_result = {'success': False, 'error': 'Failed to get user info in browser context'}
+	for attempt in range(1, 4):
+		response = await page.goto(user_info_url, wait_until='networkidle')
+
+		try:
+			await page.wait_for_function('document.readyState === "complete"', timeout=5000)
+		except Exception:
+			await page.wait_for_timeout(2000)
+
+		body_text = await page.evaluate(
+			"""() => {
+				const bodyText = document.body?.innerText || document.documentElement?.innerText || '';
+				return bodyText.trim();
+			}"""
+		)
+		if not body_text:
+			body_text = await page.content()
+
+		status_code = response.status if response else 0
+		last_result = parse_user_info_response(status_code, body_text)
+		if last_result.get('success'):
+			return last_result
+
+		if 'aliyun_waf_' not in body_text.lower() or attempt == 3:
+			return last_result
+
+		print(f'[INFO] WAF challenge still active, waiting before retry ({attempt}/3)')
+		await page.wait_for_timeout(3000)
+
+	return last_result
 
 
 async def execute_automatic_check_in_with_playwright(
