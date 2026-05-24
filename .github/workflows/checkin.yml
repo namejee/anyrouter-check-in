@@ -62,14 +62,17 @@ jobs:
         uv run playwright install chromium --with-deps
 
     - name: 恢复余额历史缓存
-      uses: actions/cache@v4
+      id: balance-cache-restore
+      uses: actions/cache/restore@v4
       with:
         path: balance_hash.txt
-        key: balance-hash-${{ github.sha }}
+        key: balance-hash-${{ github.run_id }}
         restore-keys: |
           balance-hash-
 
     - name: 执行签到
+      id: checkin
+      continue-on-error: true
       env:
         ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
         PROVIDERS: ${{ secrets.PROVIDERS }}
@@ -93,8 +96,23 @@ jobs:
       run: |
         uv run checkin.py
 
+    - name: 保存余额历史缓存
+      if: always() && hashFiles('balance_hash.txt') != ''
+      uses: actions/cache/save@v4
+      with:
+        path: balance_hash.txt
+        key: balance-hash-${{ github.run_id }}
+
     - name: 执行结果
       if: always()
       run: |
         echo "签到任务执行完成"
         echo "时间: $(Get-Date)"
+        if ("${{ steps.checkin.outcome }}" -ne "success") {
+          echo "签到脚本报告失败，但 workflow 保持成功以避免 GitHub 失败邮件轰炸。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "- 账号配置需要更新：至少一个账号 cookies / api_user 已失效" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+        } else {
+          echo "签到脚本执行成功。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+        }
