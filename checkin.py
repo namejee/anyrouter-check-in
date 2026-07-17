@@ -492,8 +492,13 @@ async def execute_automatic_check_in_with_playwright(
 				return False, None, None
 
 
-async def prepare_cookies(account_name: str, provider_config, user_cookies: dict) -> dict | None:
-	"""准备请求所需的 cookies（可能包含 WAF cookies）"""
+async def prepare_cookies(
+	account_name: str,
+	provider_config,
+	user_cookies: dict,
+	force_refresh: bool = False,
+) -> dict | None:
+	"""准备请求所需的 cookies（可能包含 WAF cookies）。"""
 	waf_cookies = {}
 
 	if provider_config.needs_waf_cookies():
@@ -501,31 +506,63 @@ async def prepare_cookies(account_name: str, provider_config, user_cookies: dict
 		user_supplied_waf_cookies = {name: user_cookies[name] for name in required_waf_cookies if user_cookies.get(name)}
 		missing_waf_cookies = [name for name in required_waf_cookies if name not in user_supplied_waf_cookies]
 
-		if not missing_waf_cookies and user_supplied_waf_cookies:
+		if not force_refresh and not missing_waf_cookies and user_supplied_waf_cookies:
 			print(f'[INFO] {account_name}: Using WAF cookies from account configuration')
 			waf_cookies = user_supplied_waf_cookies
 		else:
-			if user_supplied_waf_cookies:
+			if force_refresh:
+				print(f'[INFO] {account_name}: Refreshing WAF cookies for browser verification')
+				cookies_to_fetch = required_waf_cookies
+			elif user_supplied_waf_cookies:
 				print(
 					f'[INFO] {account_name}: Reusing {len(user_supplied_waf_cookies)} '
 					f'user-provided WAF cookie(s), fetching {len(missing_waf_cookies)} missing cookie(s)'
 				)
+				cookies_to_fetch = missing_waf_cookies
+			else:
+				cookies_to_fetch = required_waf_cookies
 
 			login_url = f'{provider_config.domain}{provider_config.login_path}'
 			fetched_waf_cookies = await get_waf_cookies_with_playwright(
 				account_name,
 				login_url,
-				missing_waf_cookies or required_waf_cookies,
+				cookies_to_fetch,
 			)
 			if not fetched_waf_cookies:
-				print(f'[FAILED] {account_name}: Unable to get WAF cookies')
-				return None
-
-			waf_cookies = {**fetched_waf_cookies, **user_supplied_waf_cookies}
+				if force_refresh and user_supplied_waf_cookies:
+					print(f'[WARNING] {account_name}: Fresh WAF cookies unavailable, reusing configured WAF cookies')
+					waf_cookies = user_supplied_waf_cookies
+				else:
+					print(f'[FAILED] {account_name}: Unable to get WAF cookies')
+					return None
+			elif force_refresh:
+				# 新获取的 WAF Cookie 优先，账号 Cookie 中的 session 等认证 Cookie 保留。
+				waf_cookies = {**user_supplied_waf_cookies, **fetched_waf_cookies}
+			else:
+				waf_cookies = {**fetched_waf_cookies, **user_supplied_waf_cookies}
 	else:
 		print(f'[INFO] {account_name}: Bypass WAF not required, using user cookies directly')
 
 	return {**waf_cookies, **user_cookies}
+
+
+async def get_browser_cookies_for_retry(
+	account_name: str,
+	provider_config,
+	user_cookies: dict,
+	current_cookies: dict,
+) -> dict:
+	"""为浏览器回退刷新 WAF Cookie，同时保留账号认证 Cookie。"""
+	if not provider_config.needs_waf_cookies():
+		return current_cookies
+
+	refreshed_cookies = await prepare_cookies(
+		account_name,
+		provider_config,
+		user_cookies,
+		force_refresh=True,
+	)
+	return refreshed_cookies or current_cookies
 
 
 def execute_check_in(client, account_name: str, provider_config, headers: dict):
@@ -630,12 +667,30 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	# 不能因为后续用户信息 API 可用就跳过这一步。
 	if provider_config.checkin_on_login:
 		print(f'[INFO] {account_name}: Check-in is triggered by opening the login page')
-		return await execute_automatic_check_in_with_playwright(
+		browser_result = await execute_automatic_check_in_with_playwright(
 			account_name,
 			provider_config,
 			all_cookies,
 			account.api_user,
 		)
+		if browser_result[0] or not provider_config.needs_waf_cookies():
+			return browser_result
+
+		refreshed_cookies = await get_browser_cookies_for_retry(
+			account_name,
+			provider_config,
+			user_cookies,
+			all_cookies,
+		)
+		if refreshed_cookies != all_cookies:
+			print(f'[INFO] {account_name}: Retrying login-page check-in with refreshed WAF cookies')
+			return await execute_automatic_check_in_with_playwright(
+				account_name,
+				provider_config,
+				refreshed_cookies,
+				account.api_user,
+			)
+		return browser_result
 
 	client = httpx.Client(http2=True, timeout=30.0)
 
@@ -667,30 +722,36 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 		elif user_info_before:
 			print(user_info_before.get('error', 'Unknown error'))
 
-		if provider_config.needs_manual_check_in():
-			success = execute_check_in(client, account_name, provider_config, headers)
-			# 签到后再次获取用户信息，用于计算签到收益
-			user_info_after = get_user_info(client, headers, user_info_url)
-			if success:
+			if provider_config.needs_manual_check_in():
+				success = execute_check_in(client, account_name, provider_config, headers)
+				# 签到后再次获取用户信息，用于计算签到收益
+				user_info_after = get_user_info(client, headers, user_info_url)
+				if success:
+					return success, user_info_before, user_info_after
+				if account.has_credentials():
+					print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
+					return await execute_automatic_check_in_with_playwright(
+						account_name,
+						provider_config,
+						all_cookies,
+						account.api_user,
+						account.username,
+						account.password,
+					)
 				return success, user_info_before, user_info_after
-			if account.has_credentials():
-				print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
-				return await execute_automatic_check_in_with_playwright(
-					account_name,
-					provider_config,
-					all_cookies,
-					account.api_user,
-					account.username,
-					account.password,
-				)
-			return success, user_info_before, user_info_after
 		else:
 			if provider_config.needs_waf_cookies() and not (user_info_before and user_info_before.get('success')):
 				print(f'[INFO] {account_name}: HTTP verification blocked, retrying in browser context')
+				browser_cookies = await get_browser_cookies_for_retry(
+					account_name,
+					provider_config,
+					user_cookies,
+					all_cookies,
+				)
 				return await execute_automatic_check_in_with_playwright(
 					account_name,
 					provider_config,
-					all_cookies,
+					browser_cookies,
 					account.api_user,
 					account.username,
 					account.password,
@@ -706,10 +767,16 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 
 			if provider_config.needs_waf_cookies():
 				print(f'[INFO] {account_name}: HTTP verification still blocked, retrying in browser context')
+				browser_cookies = await get_browser_cookies_for_retry(
+					account_name,
+					provider_config,
+					user_cookies,
+					all_cookies,
+				)
 				return await execute_automatic_check_in_with_playwright(
 					account_name,
 					provider_config,
-					all_cookies,
+					browser_cookies,
 					account.api_user,
 					account.username,
 					account.password,
