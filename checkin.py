@@ -722,23 +722,23 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 		elif user_info_before:
 			print(user_info_before.get('error', 'Unknown error'))
 
-			if provider_config.needs_manual_check_in():
-				success = execute_check_in(client, account_name, provider_config, headers)
-				# 签到后再次获取用户信息，用于计算签到收益
-				user_info_after = get_user_info(client, headers, user_info_url)
-				if success:
-					return success, user_info_before, user_info_after
-				if account.has_credentials():
-					print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
-					return await execute_automatic_check_in_with_playwright(
-						account_name,
-						provider_config,
-						all_cookies,
-						account.api_user,
-						account.username,
-						account.password,
-					)
+		if provider_config.needs_manual_check_in():
+			success = execute_check_in(client, account_name, provider_config, headers)
+			# 签到后再次获取用户信息，用于计算签到收益
+			user_info_after = get_user_info(client, headers, user_info_url)
+			if success:
 				return success, user_info_before, user_info_after
+			if account.has_credentials():
+				print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
+				return await execute_automatic_check_in_with_playwright(
+					account_name,
+					provider_config,
+					all_cookies,
+					account.api_user,
+					account.username,
+					account.password,
+				)
+			return success, user_info_before, user_info_after
 		else:
 			if provider_config.needs_waf_cookies() and not (user_info_before and user_info_before.get('success')):
 				print(f'[INFO] {account_name}: HTTP verification blocked, retrying in browser context')
