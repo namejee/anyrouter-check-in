@@ -27,6 +27,7 @@ def test_browser_fallback_injects_auth_and_waf_cookies():
 	)
 
 	assert {cookie['name'] for cookie in context.cookies} == {'session', 'acw_tc'}
+	assert all(cookie['url'].endswith('/') and 'path' not in cookie for cookie in context.cookies)
 
 
 def test_load_accounts_accepts_cookie_and_relogin_accounts(monkeypatch):

@@ -100,8 +100,8 @@ async def add_cookies_to_browser_context(context, domain: str, cookies: dict):
 		{
 			'name': str(name),
 			'value': str(value),
-			'url': domain,
-			'path': '/',
+			# Playwright 要求 Cookie 使用 url 或 domain/path 二选一，不能同时传。
+			'url': f'{domain.rstrip("/")}/',
 		}
 		for name, value in cookies.items()
 		if value is not None and str(value)
