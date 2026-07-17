@@ -30,15 +30,16 @@
 
 ### 2. 获取账号信息
 
-对于每个需要签到的账号，你需要获取：(可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/))
+对于 GitHub OAuth 和 LinuxDO OAuth 账号，直接配置登录后的完整 Cookie 即可复用登录态；GitHub Actions 不会尝试重新执行 OAuth 登录（可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/)）。
 
-1. **Cookies**: 用于身份验证
-2. **API User**: 用于请求头的 new-api-user 参数（自己配置其它平台时该值需要注意匹配）
+1. **Cookies**: 用于快速身份验证
+2. **API User**（可选）：用于请求头的 `new-api-user` 参数，可由用户信息接口自动获取
+3. **用户名/密码**（可选）：仅适用于站点提供原生账号密码登录的账号，不适用于 GitHub/LinuxDO OAuth
 
 #### 获取 Cookies：
 
-1. 打开浏览器，访问 https://anyrouter.top/
-2. 登录你的账户
+1. 打开浏览器，访问对应站点（`https://anyrouter.top/` 或 `https://agentrouter.org/`）
+2. 使用 GitHub 或 LinuxDO 登录你的账户
 3. 打开开发者工具 (F12)
 4. 切换到 "Application" 或 "存储" 选项卡
 5. 找到 "Cookies" 选项
@@ -49,7 +50,24 @@
 - `anyrouter`：建议额外填写 `acw_tc`、`cdn_sec_tc`、`acw_sc__v2`
 - `agentrouter`：建议额外填写 `acw_tc`
 
-脚本会优先复用你提供的这些 cookies；如果没有提供，才会尝试在运行时用 Playwright 自动获取。
+脚本会优先复用你提供的全部 cookies（包括 WAF cookies）；缺少 WAF cookies 时，才会尝试在运行时用 Playwright 获取。
+
+#### 需要重新登录的账号
+
+如果其他平台的 Cookie 会频繁失效，可为该账号增加 `credentials`（也兼容 `email`）字段：
+
+```json
+{
+  "name": "需要重新登录的 AgentRouter",
+  "provider": "agentrouter.org",
+  "credentials": {
+    "username": "你的用户名或邮箱",
+    "password": "你的密码"
+  }
+}
+```
+
+脚本会先尝试 Cookie；收到 401 或 WAF 拦截后，在浏览器上下文中重新登录。若站点启用了 Turnstile，人机验证仍需站点页面能够自动通过；脚本不会绕过验证码。
 
 #### 获取 API User：
 
@@ -90,26 +108,22 @@ python config/convert_cookie.py
 ```json
 [
     {
-      "name": "anyrouter账号1",
+      "name": "GitHub账号",
       "provider": "anyrouter.top",
       "cookies": {
-        "session": "你的session值"
+        "session": "你的session值",
+        "acw_tc": "你的acw_tc值",
+        "cdn_sec_tc": "你的cdn_sec_tc值",
+        "acw_sc__v2": "你的acw_sc__v2值"
       },
       "api_user": "你的api_user值"
     },
     {
-      "name": "anyrouter账号2",
-      "provider": "anyrouter",
-      "cookies": {
-        "session": "你的session值"
-      },
-      "api_user": "你的api_user值"
-    },
-    {
-      "name": "agentrouter账号",
+      "name": "LinuxDO账号",
       "provider": "agentrouter.org",
       "cookies": {
-        "session": "你的session值"
+        "session": "你的session值",
+        "acw_tc": "你的acw_tc值"
       },
       "api_user": "你的api_user值"
     }
@@ -118,8 +132,9 @@ python config/convert_cookie.py
 
 **字段说明**：
 
-- `cookies` (必需)：用于身份验证的 cookies 数据
-- `api_user` (必需)：用于请求头的 new-api-user 参数
+- `cookies` (可选)：用于快速身份验证的 cookies 数据
+- `credentials` / `email` (可选)：包含 `username` 和 `password`，用于支持密码登录的平台重新登录
+- `api_user` (可选)：用于请求头的 `new-api-user` 参数；登录后可自动从用户信息中获取
 - `provider` (可选)：指定使用的服务商，默认为 `anyrouter`
 - `name` (可选)：自定义账号显示名称，用于通知和日志中标识账号
 
@@ -158,7 +173,7 @@ python config/convert_cookie.py
 
 ## 执行时间
 
-- 脚本每 6 小时执行一次（1. action 无法准确触发，基本延时 1~1.5h；2. 目前观测到 anyrouter 的签到是每 24h 而不是零点就可签到）
+- GitHub Actions 每天 UTC 00:10 执行，即北京时间 08:10；这是为了满足 AnyRouter 北京时间 08:01 后才能通过登录页签到的规则，并预留 Actions 调度延迟
 - 你也可以随时手动触发签到
 
 ## 注意事项
@@ -209,14 +224,15 @@ python config/convert_cookie.py
   {
     "name": "AgentRouter 备用",
     "provider": "agentrouter",
-    "cookies": {
-      "session": "xyz789session",
-      "acw_tc": "可选，建议一起填写"
-    },
-    "api_user": "user456"
+    "credentials": {
+      "username": "你的用户名或邮箱",
+      "password": "你的密码"
+    }
   }
 ]
 ```
+
+同一个账号也可以同时配置 `cookies` 和 `credentials`：正常运行优先走 Cookie，Cookie 失效后自动重新登录。
 
 ## 自定义 Provider 配置（可选）
 
@@ -269,8 +285,9 @@ python config/convert_cookie.py
 **字段说明**：
 
 - `domain` (必需)：服务商的域名
-- `login_path` (可选)：登录页面路径，默认为 `/login`（仅在 `bypass_method` 为 `"waf_cookies"` 时使用）
+- `login_path` (可选)：登录页面路径，默认为 `/login`
 - `sign_in_path` (可选)：签到 API 路径，默认为 `/api/user/sign_in`
+- `checkin_on_login` (可选)：设为 `true` 时，打开登录页本身即触发签到，不调用独立签到 API
 - `user_info_path` (可选)：用户信息 API 路径，默认为 `/api/user/self`
 - `api_user_key` (可选)：API 用户标识请求头名称，默认为 `new-api-user`
 - `bypass_method` (可选)：WAF 绕过方法
@@ -297,10 +314,11 @@ python config/convert_cookie.py
 
 - `anyrouter`：
   - `bypass_method: "waf_cookies"`（需要先获取 WAF cookies，然后执行签到）
-  - `sign_in_path: "/api/user/sign_in"`
+  - `sign_in_path: null`
+  - `checkin_on_login: true`（北京时间 08:01 后在完整 Cookie 上打开登录页）
 - `agentrouter`：
-  - `bypass_method: null`（直接使用用户 cookies 执行签到）
-  - `sign_in_path: "/api/user/sign_in"`
+  - `bypass_method: "waf_cookies"`（复用 `acw_tc`，或由 Playwright 获取）
+  - `sign_in_path: null`（查询用户信息/成功登录即完成自动签到）
 
 **重要提示**：
 

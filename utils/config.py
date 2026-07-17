@@ -17,6 +17,7 @@ class ProviderConfig:
 	domain: str
 	login_path: str = '/login'
 	sign_in_path: str | None = '/api/user/sign_in'
+	checkin_on_login: bool = False
 	user_info_path: str = '/api/user/self'
 	api_user_key: str = 'new-api-user'
 	bypass_method: Literal['waf_cookies'] | None = None
@@ -51,6 +52,7 @@ class ProviderConfig:
 			domain=data['domain'],
 			login_path=data.get('login_path', '/login'),
 			sign_in_path=data.get('sign_in_path', '/api/user/sign_in'),
+			checkin_on_login=data.get('checkin_on_login', False),
 			user_info_path=data.get('user_info_path', '/api/user/self'),
 			api_user_key=data.get('api_user_key', 'new-api-user'),
 			bypass_method=data.get('bypass_method'),
@@ -63,7 +65,7 @@ class ProviderConfig:
 
 	def needs_manual_check_in(self) -> bool:
 		"""判断是否需要手动调用签到接口"""
-		return self.sign_in_path is not None
+		return self.sign_in_path is not None and not self.checkin_on_login
 
 
 @dataclass
@@ -80,7 +82,8 @@ class AppConfig:
 				name='anyrouter',
 				domain='https://anyrouter.top',
 				login_path='/login',
-				sign_in_path='/api/user/sign_in',
+				sign_in_path=None,
+				checkin_on_login=True,  # 访问登录页即触发 AnyRouter 当日签到
 				user_info_path='/api/user/self',
 				api_user_key='new-api-user',
 				bypass_method='waf_cookies',
@@ -166,18 +169,39 @@ class AppConfig:
 class AccountConfig:
 	"""账号配置"""
 
-	cookies: dict | str
-	api_user: str
+	cookies: dict | str | None = None
+	api_user: str | None = None
 	provider: str = 'anyrouter'
 	name: str | None = None
+	username: str | None = None
+	password: str | None = None
 
 	@classmethod
 	def from_dict(cls, data: dict, index: int) -> 'AccountConfig':
 		"""从字典创建 AccountConfig"""
 		provider = data.get('provider', 'anyrouter')
 		name = data.get('name', f'Account {index + 1}')
+		credentials = data.get('credentials') or data.get('login') or data.get('email')
+		username = data.get('username')
+		password = data.get('password')
+		if isinstance(credentials, dict):
+			username = username or credentials.get('username') or credentials.get('email')
+			password = password or credentials.get('password')
+		elif isinstance(credentials, str):
+			username = username or credentials
 
-		return cls(cookies=data['cookies'], api_user=data['api_user'], provider=provider, name=name if name else None)
+		return cls(
+			cookies=data.get('cookies'),
+			api_user=str(data['api_user']) if data.get('api_user') is not None else None,
+			provider=provider,
+			name=name if name else None,
+			username=username,
+			password=password,
+		)
+
+	def has_credentials(self) -> bool:
+		"""判断账号是否配置了可用于重新登录的用户名和密码"""
+		return bool(self.username and self.password)
 
 	def get_display_name(self, index: int) -> str:
 		"""获取显示名称"""
@@ -204,15 +228,16 @@ def load_accounts_config() -> list[AccountConfig] | None:
 				print(f'ERROR: Account {i + 1} configuration format is incorrect')
 				return None
 
-			if 'cookies' not in account_dict or 'api_user' not in account_dict:
-				print(f'ERROR: Account {i + 1} missing required fields (cookies, api_user)')
+			candidate = AccountConfig.from_dict(account_dict, i)
+			if not candidate.cookies and not candidate.has_credentials():
+				print(f'ERROR: Account {i + 1} must provide cookies or credentials (username/password)')
 				return None
 
 			if 'name' in account_dict and not account_dict['name']:
 				print(f'ERROR: Account {i + 1} name field cannot be empty')
 				return None
 
-			accounts.append(AccountConfig.from_dict(account_dict, i))
+			accounts.append(candidate)
 
 		return accounts
 	except Exception as e:
