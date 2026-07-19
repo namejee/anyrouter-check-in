@@ -57,12 +57,13 @@ def test_parse_check_in_response_accepts_already_checked():
 	assert parse_check_in_response('test', 200, '{"success":false,"message":"已签到"}') is True
 
 
-def test_anyrouter_checkin_is_triggered_by_login_page():
+def test_anyrouter_uses_its_explicit_check_in_api():
 	provider = AppConfig.load_from_env().get_provider('anyrouter.top')
 
 	assert provider is not None
-	assert provider.checkin_on_login is True
-	assert provider.sign_in_path is None
+	assert provider.checkin_on_login is False
+	assert provider.sign_in_path == '/api/user/sign_in'
+	assert provider.needs_manual_check_in() is True
 
 
 def test_checkin_on_login_skips_explicit_sign_in_api():
@@ -77,7 +78,7 @@ def test_checkin_on_login_skips_explicit_sign_in_api():
 	assert provider.needs_manual_check_in() is False
 
 
-def test_anyrouter_account_uses_cookie_browser_login_flow(monkeypatch):
+def test_anyrouter_retries_explicit_check_in_in_browser_when_http_is_blocked(monkeypatch):
 	account = AccountConfig(
 		name='GitHub account',
 		provider='anyrouter',
@@ -90,6 +91,17 @@ def test_anyrouter_account_uses_cookie_browser_login_flow(monkeypatch):
 		calls['prepared'] = user_cookies
 		return {'session': 'session-value', 'acw_tc': 'waf-value'}
 
+	def fake_get_user_info(client, headers, user_info_url):
+		return {'success': False, 'error': 'WAF verification page'}
+
+	def fake_execute_check_in(client, account_name, provider_config, headers):
+		calls['sign_in_path'] = provider_config.sign_in_path
+		return False
+
+	async def fake_get_browser_cookies(account_name, provider_config, user_cookies, current_cookies):
+		calls['retry_cookies'] = current_cookies
+		return {'session': 'session-value', 'acw_tc': 'fresh-waf-value'}
+
 	async def fake_browser_check_in(account_name, provider_config, cookies, api_user, username=None, password=None):
 		calls['browser'] = {
 			'cookies': cookies,
@@ -97,14 +109,32 @@ def test_anyrouter_account_uses_cookie_browser_login_flow(monkeypatch):
 			'username': username,
 			'password': password,
 		}
-		return True, None, {'success': True}
+		return True, {'success': False}, {'success': True}
+
+	class FakeCookies:
+		def update(self, cookies):
+			calls['client_cookies'] = cookies
+
+	class FakeClient:
+		def __init__(self, **kwargs):
+			self.cookies = FakeCookies()
+
+		def close(self):
+			calls['client_closed'] = True
 
 	monkeypatch.setattr('checkin.prepare_cookies', fake_prepare_cookies)
+	monkeypatch.setattr('checkin.get_user_info', fake_get_user_info)
+	monkeypatch.setattr('checkin.execute_check_in', fake_execute_check_in)
+	monkeypatch.setattr('checkin.get_browser_cookies_for_retry', fake_get_browser_cookies)
 	monkeypatch.setattr('checkin.execute_automatic_check_in_with_playwright', fake_browser_check_in)
+	monkeypatch.setattr('checkin.httpx.Client', FakeClient)
 
 	result = asyncio.run(check_in_account(account, 0, AppConfig.load_from_env()))
 
 	assert result[0] is True
 	assert calls['prepared'] == {'session': 'session-value'}
-	assert calls['browser']['cookies'] == {'session': 'session-value', 'acw_tc': 'waf-value'}
+	assert calls['sign_in_path'] == '/api/user/sign_in'
+	assert calls['retry_cookies'] == {'session': 'session-value', 'acw_tc': 'waf-value'}
+	assert calls['browser']['cookies'] == {'session': 'session-value', 'acw_tc': 'fresh-waf-value'}
 	assert calls['browser']['username'] is None
+	assert calls['client_closed'] is True
