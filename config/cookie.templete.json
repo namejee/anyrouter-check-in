@@ -1,6 +1,6 @@
 [
   {
-    "name": "账号1",
+    "name": "GitHub账号（AnyRouter）",
     "provider": "anyrouter.top",
     "cookies": {
       "session": "session值",
@@ -11,15 +11,7 @@
     "api_user": "用户值"
   },
   {
-    "name": "账号2",
-    "provider": "anyrouter.top",
-    "cookies": {
-      "session": "session值"
-    },
-    "api_user": "用户值"
-  },
-  {
-    "name": "agentrouter账号",
+    "name": "LinuxDO账号（AgentRouter）",
     "provider": "agentrouter.org",
     "cookies": {
       "session": "session值",

@@ -1,7 +1,7 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '10 0 * * *'
   workflow_dispatch:
 
 jobs:
@@ -111,7 +111,7 @@ jobs:
         if ("${{ steps.checkin.outcome }}" -ne "success") {
           echo "签到脚本报告失败，但 workflow 保持成功以避免 GitHub 失败邮件轰炸。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "- 账号配置需要更新：至少一个账号 cookies / api_user 已失效" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "- 至少一个账号的 Cookie、api_user 或 WAF 状态需要更新" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
         } else {
           echo "签到脚本执行成功。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
