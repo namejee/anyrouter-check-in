@@ -662,9 +662,8 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 		else:
 			return False, None
 
-	# AnyRouter 没有可靠的独立签到 API：北京时间 08:01 后访问登录页，
-	# 由站点在登录流程中完成签到。必须在带完整 Cookie 的浏览器上下文中打开登录页，
-	# 不能因为后续用户信息 API 可用就跳过这一步。
+	# 部分平台会在登录页访问时完成签到；这类平台仍需走浏览器上下文，
+	# 并以用户信息接口可用作为登录状态验证。
 	if provider_config.checkin_on_login:
 		print(f'[INFO] {account_name}: Check-in is triggered by opening the login page')
 		browser_result = await execute_automatic_check_in_with_playwright(
@@ -728,6 +727,22 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			user_info_after = get_user_info(client, headers, user_info_url)
 			if success:
 				return success, user_info_before, user_info_after
+			if provider_config.needs_waf_cookies():
+				print(f'[INFO] {account_name}: HTTP check-in was blocked, retrying the check-in API in browser context')
+				browser_cookies = await get_browser_cookies_for_retry(
+					account_name,
+					provider_config,
+					user_cookies,
+					all_cookies,
+				)
+				return await execute_automatic_check_in_with_playwright(
+					account_name,
+					provider_config,
+					browser_cookies,
+					account.api_user,
+					account.username,
+					account.password,
+				)
 			if account.has_credentials():
 				print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
 				return await execute_automatic_check_in_with_playwright(
