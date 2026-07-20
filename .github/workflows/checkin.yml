@@ -1,7 +1,10 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    - cron: '10 0 * * *'
+    # GitHub Actions cron 使用 UTC；对应北京时间 08:12、08:22、08:32、08:42。
+    - cron: '12,22,32,42 0 * * *'
+    # 对应北京时间 10:52，作为当天最后一次补签。
+    - cron: '52 2 * * *'
   workflow_dispatch:
 
 jobs:
@@ -72,7 +75,6 @@ jobs:
 
     - name: 执行签到
       id: checkin
-      continue-on-error: true
       env:
         ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
         PROVIDERS: ${{ secrets.PROVIDERS }}
@@ -109,7 +111,7 @@ jobs:
         echo "签到任务执行完成"
         echo "时间: $(Get-Date)"
         if ("${{ steps.checkin.outcome }}" -ne "success") {
-          echo "签到脚本报告失败，但 workflow 保持成功以避免 GitHub 失败邮件轰炸。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "签到脚本报告失败，workflow 将标记为失败。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 至少一个账号的 Cookie、api_user 或 WAF 状态需要更新" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
