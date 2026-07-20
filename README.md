@@ -173,14 +173,15 @@ python config/convert_cookie.py
 
 ## 执行时间
 
-- GitHub Actions 每天 UTC 00:10 执行，即北京时间 08:10；这是为了满足 AnyRouter 北京时间 08:01 后才能通过登录页签到的规则，并预留 Actions 调度延迟
+- GitHub Actions 每天执行 5 次：北京时间 08:12、08:22、08:32、08:42 和 10:52（对应 UTC 00:12、00:22、00:32、00:42 和 02:52）
+- 多次执行用于降低 GitHub 定时任务延迟或漏触发造成的影响；账号当天已经签到时，后续执行会按成功处理
 - 你也可以随时手动触发签到
 
 ## 注意事项
 
 - 请确保每个账号的 cookies 和 API User 都是正确的
 - 可以在 Actions 页面查看详细的运行日志
-- 支持部分账号失败，只要有账号成功签到，整个任务就不会失败
+- 任意账号签到失败时，任务会标记为失败，便于及时发现 Cookie、API User 或 WAF 状态异常
 - 报 401 错误，请重新获取 cookies，理论 1 个月失效，但有 Bug，详见 [#6](https://github.com/millylee/anyrouter-check-in/issues/6)
 - 请求 200，但出现 Error 1040（08004）：Too many connections，官方数据库问题，目前已修复，但遇到几次了，详见 [#7](https://github.com/millylee/anyrouter-check-in/issues/7)
 
@@ -314,8 +315,8 @@ python config/convert_cookie.py
 
 - `anyrouter`：
   - `bypass_method: "waf_cookies"`（需要先获取 WAF cookies，然后执行签到）
-  - `sign_in_path: null`
-  - `checkin_on_login: true`（北京时间 08:01 后在完整 Cookie 上打开登录页）
+  - `sign_in_path: "/api/user/sign_in"`
+  - `checkin_on_login: false`（打开登录页刷新 WAF 状态后，显式调用签到接口）
 - `agentrouter`：
   - `bypass_method: "waf_cookies"`（复用 `acw_tc`，或由 Playwright 获取）
   - `sign_in_path: null`（查询用户信息/成功登录即完成自动签到）
