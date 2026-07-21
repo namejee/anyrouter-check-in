@@ -361,7 +361,7 @@ def parse_check_in_response(account_name: str, status_code: int, response_text: 
 		return True
 
 	error_msg = str(result.get('msg', result.get('message', 'Unknown error')))
-	already_checked_keywords = ['已经签到', '已签到', '重复签到', 'already checked', 'already signed']
+	already_checked_keywords = ['已经签到', '已签到', '今日已签到', '重复签到', 'already checked', 'already signed', 'already checkin']
 	if any(keyword in error_msg.lower() for keyword in already_checked_keywords):
 		print(f'[SUCCESS] {account_name}: Already checked in today')
 		return True

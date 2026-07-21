@@ -98,6 +98,17 @@ class AppConfig:
 				bypass_method='waf_cookies',
 				waf_cookie_names=['acw_tc'],
 			),
+			# LazyDaily / New API: 签到走 /api/user/checkin，不需要阿里云 WAF cookie
+			'lazydaily': ProviderConfig(
+				name='lazydaily',
+				domain='https://lazydaily.de5.net',
+				login_path='/login',
+				sign_in_path='/api/user/checkin',
+				user_info_path='/api/user/self',
+				api_user_key='new-api-user',
+				bypass_method=None,
+				waf_cookie_names=None,
+			),
 		}
 
 		# 尝试从环境变量加载自定义 providers
@@ -132,7 +143,7 @@ class AppConfig:
 		"""获取指定 provider 配置
 
 		支持以下格式匹配:
-		- 精确名称: "anyrouter", "agentrouter"
+		- 精确名称: "anyrouter", "agentrouter", "lazydaily"
 		- 域名格式: "anyrouter.top", "agentrouter.org"
 		- 完整URL: "https://anyrouter.top"
 		"""
