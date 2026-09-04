@@ -2,8 +2,11 @@ name: AnyRouter 自动签到
 on:
   schedule:
     # GitHub Actions cron 使用 UTC。
-    # 对应北京时间：13:00、18:00、24:00（次日 00:00）。
-    - cron: '0 5,10,16 * * *'
+    # 对应北京时间：08:30、12:07、18:30、22:31。
+    - cron: '30 0 * * *'
+    - cron: '7 4 * * *'
+    - cron: '30 10 * * *'
+    - cron: '31 14 * * *'
   workflow_dispatch:
 
 jobs:
