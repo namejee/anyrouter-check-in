@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from dotenv import load_dotenv
@@ -20,6 +20,33 @@ from utils.notify import notify
 load_dotenv()
 
 BALANCE_HASH_FILE = 'balance_hash.txt'
+BALANCE_HISTORY_FILE = 'balance_history.json'
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def load_balance_history() -> dict:
+	try:
+		with open(BALANCE_HISTORY_FILE, encoding='utf-8') as history_file:
+			history = json.load(history_file)
+		if not isinstance(history, dict):
+			return {}
+		return {
+			key: info
+			for key, info in history.items()
+			if isinstance(info, dict)
+			and info.get('success') is True
+			and all(type(info.get(field)) in (int, float) for field in ('quota', 'used_quota'))
+		}
+	except FileNotFoundError:
+		return {}
+	except (OSError, ValueError) as exc:
+		print(f'[WARNING] Previous balance history is unavailable: {exc}')
+		return {}
+
+
+def save_balance_history(history: dict):
+	with open(BALANCE_HISTORY_FILE, 'w', encoding='utf-8') as history_file:
+		json.dump(history, history_file, ensure_ascii=False, indent=2)
 
 
 def load_balance_hash():
@@ -173,15 +200,24 @@ def parse_user_info_response(status_code: int, response_text: str):
 		body_preview = summarize_response_body(response_text)
 		return {'success': False, 'error': f'Failed to parse user info response: {body_preview}'}
 
-	if data.get('success'):
-		user_data = data.get('data', {})
-		quota = round(user_data.get('quota', 0) / 500000, 2)
-		used_quota = round(user_data.get('used_quota', 0) / 500000, 2)
+	if not isinstance(data, dict):
+		return {'success': False, 'error': 'User info response must be a JSON object'}
+
+	if data.get('success') is True:
+		user_data = data.get('data')
+		if not isinstance(user_data, dict) or any(
+			type(user_data.get(key)) not in (int, float) for key in ('quota', 'used_quota')
+		):
+			return {'success': False, 'error': 'User info response is missing valid balance data'}
+		quota = round(user_data['quota'] / 500000, 2)
+		used_quota = round(user_data['used_quota'] / 500000, 2)
 		user_id = user_data.get('id') or user_data.get('user_id') or user_data.get('userId')
 		return {
 			'success': True,
 			'quota': quota,
 			'used_quota': used_quota,
+			'quota_raw': user_data['quota'],
+			'used_quota_raw': user_data['used_quota'],
 			'api_user': str(user_id) if user_id is not None else None,
 			'display': f':money: Current balance: ${quota}, Used: ${used_quota}',
 		}
@@ -249,7 +285,8 @@ async def find_visible_element(page, selectors: list[str]):
 			element = await page.query_selector(selector)
 			if element and await element.is_visible():
 				return element
-		except Exception:
+		# Optional selectors vary between providers; try the next one if lookup fails.
+		except Exception:  # nosec B112
 			continue
 	return None
 
@@ -350,20 +387,37 @@ def parse_check_in_response(account_name: str, status_code: int, response_text: 
 	try:
 		result = json.loads(response_text)
 	except json.JSONDecodeError:
-		if 'success' in response_text.lower():
-			print(f'[SUCCESS] {account_name}: Check-in successful!')
-			return True
 		print(f'[FAILED] {account_name}: Check-in failed - Invalid response format')
 		return False
 
-	if result.get('ret') == 1 or result.get('code') == 0 or result.get('success'):
-		print(f'[SUCCESS] {account_name}: Check-in successful!')
-		return True
+	if not isinstance(result, dict):
+		print(f'[FAILED] {account_name}: Check-in response must be a JSON object')
+		return False
 
 	error_msg = str(result.get('msg', result.get('message', 'Unknown error')))
-	already_checked_keywords = ['已经签到', '已签到', '今日已签到', '重复签到', 'already checked', 'already signed', 'already checkin']
+	already_checked_keywords = [
+		'已经签到',
+		'已签到',
+		'今日已签到',
+		'重复签到',
+		'already checked',
+		'already signed',
+		'already checkin',
+	]
 	if any(keyword in error_msg.lower() for keyword in already_checked_keywords):
 		print(f'[SUCCESS] {account_name}: Already checked in today')
+		return True
+
+	# 有 success 字段时以明确的布尔值为准，不能把字符串 "false" 或网页中的
+	# "success" 文本当成签到成功，也不能让 code=0 覆盖 success=false。
+	if 'success' in result:
+		confirmed = result['success'] is True
+	elif 'ret' in result:
+		confirmed = type(result['ret']) is int and result['ret'] == 1
+	else:
+		confirmed = type(result.get('code')) is int and result['code'] == 0
+	if confirmed:
+		print(f'[SUCCESS] {account_name}: Check-in API confirmed completion')
 		return True
 
 	print(f'[FAILED] {account_name}: Check-in failed - {error_msg}')
@@ -467,10 +521,14 @@ async def execute_automatic_check_in_with_playwright(
 					)
 					if not checkin_success:
 						await context.close()
-						return False, user_info_before, {
-							'success': False,
-							'error': 'Browser check-in request failed',
-						}
+						return (
+							False,
+							user_info_before,
+							{
+								'success': False,
+								'error': 'Browser check-in request failed',
+							},
+						)
 				else:
 					print(f'[INFO] {account_name}: Verifying automatic check-in via browser user info request')
 
@@ -503,7 +561,9 @@ async def prepare_cookies(
 
 	if provider_config.needs_waf_cookies():
 		required_waf_cookies = provider_config.waf_cookie_names or []
-		user_supplied_waf_cookies = {name: user_cookies[name] for name in required_waf_cookies if user_cookies.get(name)}
+		user_supplied_waf_cookies = {
+			name: user_cookies[name] for name in required_waf_cookies if user_cookies.get(name)
+		}
 		missing_waf_cookies = [name for name in required_waf_cookies if name not in user_supplied_waf_cookies]
 
 		if not force_refresh and not missing_waf_cookies and user_supplied_waf_cookies:
@@ -543,7 +603,7 @@ async def prepare_cookies(
 	else:
 		print(f'[INFO] {account_name}: Bypass WAF not required, using user cookies directly')
 
-	return {**waf_cookies, **user_cookies}
+	return {**user_cookies, **waf_cookies}
 
 
 async def get_browser_cookies_for_retry(
@@ -577,6 +637,90 @@ def execute_check_in(client, account_name: str, provider_config, headers: dict):
 	return parse_check_in_response(account_name, response.status_code, response.text)
 
 
+def balance_total_change(before: dict, after: dict) -> float:
+	before_quota = before.get('quota_raw', before['quota'] * 500000)
+	after_quota = after.get('quota_raw', after['quota'] * 500000)
+	before_used = before.get('used_quota_raw', before['used_quota'] * 500000)
+	after_used = after.get('used_quota_raw', after['used_quota'] * 500000)
+	return float(round((after_quota + after_used - before_quota - before_used) / 500000, 2))
+
+
+def build_check_in_detail(
+	account_name: str, success: bool, before: dict | None, after: dict | None, previous: dict | None = None
+) -> dict:
+	"""只记录本轮实际读取的余额，不把缺失值补成零或把零变化当成已签到。"""
+	detail = {'name': account_name, 'success': success}
+	for prefix, info in (('before', before), ('after', after)):
+		if info and info.get('success'):
+			detail[f'{prefix}_quota'] = info['quota']
+			detail[f'{prefix}_used'] = info['used_quota']
+		else:
+			detail[f'{prefix}_quota'] = None
+			detail[f'{prefix}_used'] = None
+
+	detail.update(
+		check_in_reward=None, usage_increase=None, balance_change=None, previous_quota=None, since_previous=None
+	)
+	detail['previous_checked_at'] = None
+	if previous and previous.get('success'):
+		detail['previous_quota'] = previous['quota']
+		detail['previous_checked_at'] = previous.get('checked_at')
+		if after and after.get('success'):
+			detail['since_previous'] = balance_total_change(previous, after)
+	if before and after and before.get('success') and after.get('success'):
+		# 使用原始额度计算，最后再四舍五入，避免分别取两位小数制造虚假收益。
+		before_quota = before.get('quota_raw', before['quota'] * 500000)
+		after_quota = after.get('quota_raw', after['quota'] * 500000)
+		before_used = before.get('used_quota_raw', before['used_quota'] * 500000)
+		after_used = after.get('used_quota_raw', after['used_quota'] * 500000)
+		detail['check_in_reward'] = balance_total_change(before, after)
+		detail['usage_increase'] = round((after_used - before_used) / 500000, 2)
+		detail['balance_change'] = round((after_quota - before_quota) / 500000, 2)
+	return detail
+
+
+def format_amount(value, signed: bool = False) -> str:
+	if value is None:
+		return '未读取'
+	return f'${value:+.2f}' if signed else f'${value:.2f}'
+
+
+def format_run_summary(details: list[dict], executed_at: str) -> str:
+	"""每次执行都输出账号明细，供 Actions 摘要及本地日志复核。"""
+	lines = [
+		'## 签到执行明细',
+		'',
+		f'北京时间：{executed_at}',
+		'',
+		'| 账号 | 执行结果 | 本轮前余额 | 本轮后余额 | 本轮额度变化 | 本轮消耗 | 上次记录余额 | 较上次额度变化 |',
+		'| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+	]
+	for detail in details:
+		name = detail['name'].replace('|', '\\|').replace('\n', ' ').replace('\r', ' ')
+		status = '已确认完成' if detail['success'] else '失败 / 未确认'
+		values = [
+			format_amount(detail['before_quota']),
+			format_amount(detail['after_quota']),
+			format_amount(detail['check_in_reward'], signed=True),
+			format_amount(detail['usage_increase']),
+			format_amount(detail['previous_quota']),
+			format_amount(detail['since_previous'], signed=True),
+		]
+		lines.append(f'| {name} | {status} | ' + ' | '.join(values) + ' |')
+	lines.extend(
+		[
+			'',
+			'本轮额度变化 =（后余额 + 后累计消耗）−（前余额 + 前累计消耗）。',
+			'余额无变化不代表当日已领到奖励；此表仅记录本轮执行，不把历史余额当作当前余额。',
+			'较上次额度变化按上次成功读取至本轮结束计算，并补回期间消耗；该区间可能跨天。',
+		]
+	)
+	for detail in details:
+		if detail['previous_checked_at']:
+			lines.append(f'- {detail["name"]} 上次记录（北京时间）：{detail["previous_checked_at"]}')
+	return '\n'.join(lines)
+
+
 def format_check_in_notification(detail: dict) -> str:
 	"""格式化签到通知消息
 
@@ -588,12 +732,16 @@ def format_check_in_notification(detail: dict) -> str:
 	"""
 	lines = [
 		f'[CHECK-IN] {detail["name"]}',
+		'  状态：' + ('已确认完成' if detail['success'] else '失败 / 未确认'),
 		'  ━━━━━━━━━━━━━━━━━━━━',
 		'  📍 签到前',
-		f'     💵 余额: ${detail["before_quota"]:.2f}  |  📊 累计消耗: ${detail["before_used"]:.2f}',
+		f'     💵 余额: {format_amount(detail["before_quota"])}  |  📊 累计消耗: {format_amount(detail["before_used"])}',
 		'  📍 签到后',
-		f'     💵 余额: ${detail["after_quota"]:.2f}  |  📊 累计消耗: ${detail["after_used"]:.2f}',
+		f'     💵 余额: {format_amount(detail["after_quota"])}  |  📊 累计消耗: {format_amount(detail["after_used"])}',
 	]
+	if detail['check_in_reward'] is None:
+		lines.append('  ℹ️  余额数据不完整，无法计算本轮额度变化')
+		return '\n'.join(lines)
 
 	# 判断是否有变化
 	has_reward = detail['check_in_reward'] != 0
@@ -602,13 +750,13 @@ def format_check_in_notification(detail: dict) -> str:
 	if has_reward or has_usage:
 		lines.append('  ━━━━━━━━━━━━━━━━━━━━')
 
-		# 已签到但期间有使用
+		# 余额变化不能单独证明签到奖励到账。
 		if not has_reward and has_usage:
-			lines.append('  ℹ️  今日已签到（期间有使用）')
+			lines.append('  ℹ️  本轮未观察到额度增加（期间有使用）')
 
 		# 签到获得
 		if has_reward:
-			lines.append(f'  🎁 签到获得: +${detail["check_in_reward"]:.2f}')
+			lines.append(f'  🎁 本轮额度变化: {format_amount(detail["check_in_reward"], signed=True)}')
 
 		# 期间消耗
 		if has_usage:
@@ -621,7 +769,7 @@ def format_check_in_notification(detail: dict) -> str:
 			lines.append(f'  {change_emoji} 余额变化: {change_symbol}${detail["balance_change"]:.2f}')
 	else:
 		# 无任何变化
-		lines.extend(['  ━━━━━━━━━━━━━━━━━━━━', '  ℹ️  今日已签到，无变化'])
+		lines.extend(['  ━━━━━━━━━━━━━━━━━━━━', '  ℹ️  本轮余额无变化，不能据此判断当日奖励是否到账'])
 
 	return '\n'.join(lines)
 
@@ -634,14 +782,14 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 	provider_config = app_config.get_provider(account.provider)
 	if not provider_config:
 		print(f'[FAILED] {account_name}: Provider "{account.provider}" not found in configuration')
-		return False, None
+		return False, None, None
 
 	print(f'[INFO] {account_name}: Using provider "{account.provider}" ({provider_config.domain})')
 
 	user_cookies = parse_cookies(account.cookies)
 	if not user_cookies and not account.has_credentials():
 		print(f'[FAILED] {account_name}: Configure cookies or username/password credentials')
-		return False, None
+		return False, None, None
 
 	# 没有 Cookie 时直接走浏览器登录；这正是 AgentRouter 重新登录账号的用法。
 	if not user_cookies:
@@ -660,7 +808,7 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			print(f'[INFO] {account_name}: WAF cookies unavailable, continuing with browser re-authentication')
 			all_cookies = user_cookies
 		else:
-			return False, None
+			return False, None, None
 
 	# 部分平台会在登录页访问时完成签到；这类平台仍需走浏览器上下文，
 	# 并以用户信息接口可用作为登录状态验证。
@@ -725,17 +873,20 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 			success = execute_check_in(client, account_name, provider_config, headers)
 			# 签到后再次获取用户信息，用于计算签到收益
 			user_info_after = get_user_info(client, headers, user_info_url)
-			if success:
+			if success and user_info_after and user_info_after.get('success'):
 				return success, user_info_before, user_info_after
+			success = False
 			if provider_config.needs_waf_cookies():
-				print(f'[INFO] {account_name}: HTTP check-in was blocked, retrying the check-in API in browser context')
+				print(
+					f'[INFO] {account_name}: HTTP check-in or balance verification failed, retrying in browser context'
+				)
 				browser_cookies = await get_browser_cookies_for_retry(
 					account_name,
 					provider_config,
 					user_cookies,
 					all_cookies,
 				)
-				return await execute_automatic_check_in_with_playwright(
+				browser_success, browser_before, browser_after = await execute_automatic_check_in_with_playwright(
 					account_name,
 					provider_config,
 					browser_cookies,
@@ -743,9 +894,11 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 					account.username,
 					account.password,
 				)
+				before = user_info_before if user_info_before and user_info_before.get('success') else browser_before
+				return browser_success, before, browser_after
 			if account.has_credentials():
 				print(f'[INFO] {account_name}: Cookie check-in failed, retrying with browser credentials')
-				return await execute_automatic_check_in_with_playwright(
+				browser_success, browser_before, browser_after = await execute_automatic_check_in_with_playwright(
 					account_name,
 					provider_config,
 					all_cookies,
@@ -753,6 +906,8 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 					account.username,
 					account.password,
 				)
+				before = user_info_before if user_info_before and user_info_before.get('success') else browser_before
+				return browser_success, before, browser_after
 			return success, user_info_before, user_info_after
 		else:
 			if provider_config.needs_waf_cookies() and not (user_info_before and user_info_before.get('success')):
@@ -812,7 +967,7 @@ async def check_in_account(account: AccountConfig, account_index: int, app_confi
 async def main():
 	"""主函数"""
 	print('[SYSTEM] AnyRouter.top multi-account auto check-in script started (using Playwright)')
-	print(f'[TIME] Execution time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+	print(f'[TIME] Execution time (UTC+08:00): {datetime.now(BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")}')
 
 	app_config = AppConfig.load_from_env()
 	print(f'[INFO] Loaded {len(app_config.providers)} provider configuration(s)')
@@ -825,6 +980,7 @@ async def main():
 	print(f'[INFO] Found {len(accounts)} account configurations')
 
 	last_balance_hash = load_balance_hash()
+	balance_history = load_balance_history()
 
 	success_count = 0
 	total_count = len(accounts)
@@ -838,6 +994,14 @@ async def main():
 		account_key = f'account_{i + 1}'
 		try:
 			success, user_info_before, user_info_after = await check_in_account(account, i, app_config)
+			success = bool(success and user_info_after and user_info_after.get('success'))
+			provider = app_config.get_provider(account.provider)
+			identity = (user_info_after or {}).get('api_user') or account.api_user or account.get_display_name(i)
+			history_key = f'{provider.domain if provider else account.provider}|{identity}'
+			previous = balance_history.get(history_key)
+			account_check_in_details[account_key] = build_check_in_detail(
+				account.get_display_name(i), success, user_info_before, user_info_after, previous
+			)
 			if success:
 				success_count += 1
 
@@ -854,38 +1018,14 @@ async def main():
 				current_quota = user_info_after['quota']
 				current_used = user_info_after['used_quota']
 				current_balances[account_key] = {'quota': current_quota, 'used': current_used}
-
-				# 计算签到收益
-				if user_info_before and user_info_before.get('success'):
-					before_quota = user_info_before['quota']
-					before_used = user_info_before['used_quota']
-					after_quota = user_info_after['quota']
-					after_used = user_info_after['used_quota']
-
-					# 计算总额度（余额 + 历史消耗）
-					total_before = before_quota + before_used
-					total_after = after_quota + after_used
-
-					# 签到获得的额度 = 总额度增加量
-					check_in_reward = total_after - total_before
-
-					# 本次消耗 = 历史消耗增加量
-					usage_increase = after_used - before_used
-
-					# 余额变化
-					balance_change = after_quota - before_quota
-
-					account_check_in_details[account_key] = {
-						'name': account.get_display_name(i),
-						'before_quota': before_quota,
-						'before_used': before_used,
-						'after_quota': after_quota,
-						'after_used': after_used,
-						'check_in_reward': check_in_reward,  # 签到获得
-						'usage_increase': usage_increase,  # 本次消耗
-						'balance_change': balance_change,  # 余额变化
-						'success': success,
-					}
+				balance_history[history_key] = {
+					key: user_info_after[key]
+					for key in ('success', 'quota', 'used_quota', 'quota_raw', 'used_quota_raw')
+					if key in user_info_after
+				}
+				balance_history[history_key]['checked_at'] = datetime.now(BEIJING_TIMEZONE).strftime(
+					'%Y-%m-%d %H:%M:%S'
+				)
 
 			if should_notify_this_account:
 				account_name = account.get_display_name(i)
@@ -900,6 +1040,7 @@ async def main():
 		except Exception as e:
 			account_name = account.get_display_name(i)
 			print(f'[FAILED] {account_name} processing exception: {e}')
+			account_check_in_details[account_key] = build_check_in_detail(account_name, False, None, None)
 			need_notify = True  # 异常也需要通知
 			notification_content.append(f'[FAIL] {account_name} exception: {str(e)[:50]}...')
 
@@ -937,6 +1078,15 @@ async def main():
 	# 保存当前余额hash
 	if current_balance_hash:
 		save_balance_hash(current_balance_hash)
+		save_balance_history(balance_history)
+
+	# 即使本轮余额无变化、没有配置推送，也要留下两个账号的可复核明细。
+	executed_at = datetime.now(BEIJING_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
+	run_summary = format_run_summary(list(account_check_in_details.values()), executed_at)
+	print('\n' + run_summary)
+	if summary_path := os.getenv('GITHUB_STEP_SUMMARY'):
+		with open(summary_path, 'a', encoding='utf-8') as summary_file:
+			summary_file.write(run_summary + '\n')
 
 	if need_notify and notification_content:
 		# 构建通知内容
@@ -953,13 +1103,13 @@ async def main():
 		else:
 			summary.append('[ERROR] All accounts check-in failed')
 
-		time_info = f'[TIME] Execution time: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+		time_info = f'[TIME] Execution time (UTC+08:00): {datetime.now(BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")}'
 
 		notify_content = '\n\n'.join([time_info, '\n'.join(notification_content), '\n'.join(summary)])
 
 		print(notify_content)
 		notify.push_message('AnyRouter Check-in Alert', notify_content, msg_type='text')
-		print('[NOTIFY] Notification sent due to failures or balance changes')
+		print('[NOTIFY] Notification delivery attempted; see individual channel results above')
 	else:
 		print('[INFO] All accounts successful and no balance changes detected, notification skipped')
 

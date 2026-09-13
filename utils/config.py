@@ -78,12 +78,12 @@ class AppConfig:
 	def load_from_env(cls) -> 'AppConfig':
 		"""从环境变量加载配置"""
 		providers = {
-		'anyrouter': ProviderConfig(
-			name='anyrouter',
-			domain='https://anyrouter.top',
-			login_path='/login',
-			sign_in_path='/api/user/sign_in',
-			user_info_path='/api/user/self',
+			'anyrouter': ProviderConfig(
+				name='anyrouter',
+				domain='https://anyrouter.top',
+				login_path='/login',
+				sign_in_path='/api/user/sign_in',
+				user_info_path='/api/user/self',
 				api_user_key='new-api-user',
 				bypass_method='waf_cookies',
 				waf_cookie_names=['acw_tc', 'cdn_sec_tc', 'acw_sc__v2'],
@@ -157,7 +157,7 @@ class AppConfig:
 		# 移除协议前缀
 		for prefix in ('https://', 'http://'):
 			if normalized.startswith(prefix):
-				normalized = normalized[len(prefix):]
+				normalized = normalized[len(prefix) :]
 				break
 		# 移除尾部斜杠
 		normalized = normalized.rstrip('/')
@@ -166,7 +166,7 @@ class AppConfig:
 			domain = provider.domain.lower()
 			for prefix in ('https://', 'http://'):
 				if domain.startswith(prefix):
-					domain = domain[len(prefix):]
+					domain = domain[len(prefix) :]
 					break
 			domain = domain.rstrip('/')
 			if domain == normalized:

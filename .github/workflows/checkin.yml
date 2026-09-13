@@ -9,9 +9,14 @@ on:
     - cron: '31,41 14 * * *'
   workflow_dispatch:
 
+concurrency:
+  group: anyrouter-check-in-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   checkin:
     runs-on: windows-2025
+    timeout-minutes: 10
     environment: production
     env:
       PYTHONIOENCODING: utf-8
@@ -70,8 +75,10 @@ jobs:
       id: balance-cache-restore
       uses: actions/cache/restore@v4
       with:
-        path: balance_hash.txt
-        key: balance-hash-${{ github.run_id }}
+        path: |
+          balance_hash.txt
+          balance_history.json
+        key: balance-hash-${{ github.run_id }}-${{ github.run_attempt }}
         restore-keys: |
           balance-hash-
 
@@ -104,19 +111,22 @@ jobs:
       if: always() && hashFiles('balance_hash.txt') != ''
       uses: actions/cache/save@v4
       with:
-        path: balance_hash.txt
-        key: balance-hash-${{ github.run_id }}
+        path: |
+          balance_hash.txt
+          balance_history.json
+        key: balance-hash-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: 执行结果
       if: always()
       run: |
         echo "签到任务执行完成"
         echo "时间: $(Get-Date)"
+        echo "触发方式: ${{ github.event_name }}; UTC cron: ${{ github.event.schedule }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
         if ("${{ steps.checkin.outcome }}" -ne "success") {
           echo "签到脚本报告失败，workflow 将标记为失败。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 至少一个账号的 Cookie、api_user 或 WAF 状态需要更新" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
         } else {
-          echo "签到脚本执行成功。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "全部账号执行及余额读取完成；本轮明细见上表。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
         }
