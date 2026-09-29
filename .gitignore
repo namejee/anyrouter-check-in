@@ -8,6 +8,8 @@ __pycache__
 .mypy_cache
 balance_hash.txt
 balance_history.json
+balance_daily.json
+balance_daily.tmp
 
 .DS_Store
 cookie.json

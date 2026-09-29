@@ -15,12 +15,14 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
 from utils.config import AccountConfig, AppConfig, load_accounts_config
+from utils.daily_ledger import format_daily_summary, record_balance_run
 from utils.notify import notify
 
 load_dotenv()
 
 BALANCE_HASH_FILE = 'balance_hash.txt'
 BALANCE_HISTORY_FILE = 'balance_history.json'
+BALANCE_DAILY_FILE = 'balance_daily.json'
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 
 
@@ -1083,6 +1085,10 @@ async def main():
 	# 即使本轮余额无变化、没有配置推送，也要留下两个账号的可复核明细。
 	executed_at = datetime.now(BEIJING_TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
 	run_summary = format_run_summary(list(account_check_in_details.values()), executed_at)
+	ledger = record_balance_run(BALANCE_DAILY_FILE, list(account_check_in_details.values()), executed_at)
+	run_summary += '\n\n' + format_daily_summary(
+		ledger, executed_at, [detail['name'] for detail in account_check_in_details.values()]
+	)
 	print('\n' + run_summary)
 	if summary_path := os.getenv('GITHUB_STEP_SUMMARY'):
 		with open(summary_path, 'a', encoding='utf-8') as summary_file:

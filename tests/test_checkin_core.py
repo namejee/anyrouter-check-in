@@ -294,6 +294,7 @@ def test_main_always_writes_summary_and_fails_unverified_accounts(monkeypatch, t
 
 	monkeypatch.setenv('GITHUB_STEP_SUMMARY', str(output))
 	monkeypatch.setattr('checkin.BALANCE_HISTORY_FILE', str(history_file))
+	monkeypatch.setattr('checkin.BALANCE_DAILY_FILE', str(tmp_path / 'daily.json'))
 	monkeypatch.setattr('checkin.load_accounts_config', lambda: [account])
 	monkeypatch.setattr('checkin.check_in_account', check_account)
 	monkeypatch.setattr('checkin.load_balance_hash', lambda: 'unchanged')
@@ -309,6 +310,11 @@ def test_main_always_writes_summary_and_fails_unverified_accounts(monkeypatch, t
 	assert 'test-account' in summary
 	assert ('已确认完成' if verified else '失败 / 未确认') in summary
 	assert '$35.00' in summary
+	assert '最近 10 天到账记录' in summary
+	daily = json.loads((tmp_path / 'daily.json').read_text())
+	assert daily[-1]['details'][0]['success'] is verified
+	assert daily[-1]['details'][0]['after_quota'] == (35 if verified else None)
+	assert 'test-session' not in (tmp_path / 'daily.json').read_text()
 	if verified:
 		history = json.loads(history_file.read_text())
 		assert history['https://anyrouter.top|test-account']['quota'] == 35

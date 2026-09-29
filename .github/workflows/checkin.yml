@@ -84,6 +84,14 @@ jobs:
         restore-keys: |
           balance-hash-
 
+    - name: 恢复每日到账记录
+      uses: actions/cache/restore@v4
+      with:
+        path: balance_daily.json
+        key: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          balance-daily-
+
     - name: 执行签到
       id: checkin
       env:
@@ -117,6 +125,21 @@ jobs:
           balance_hash.txt
           balance_history.json
         key: balance-hash-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: 保存每日到账记录
+      if: always() && hashFiles('balance_daily.json') != ''
+      uses: actions/cache/save@v4
+      with:
+        path: balance_daily.json
+        key: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
+
+    - name: 归档到账记录（不含凭据）
+      if: always() && hashFiles('balance_daily.json') != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
+        path: balance_daily.json
+        retention-days: 90
 
     - name: 执行结果
       if: always()
