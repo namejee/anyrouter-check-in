@@ -1,0 +1,23 @@
+{
+  "type": "design",
+  "designSystems": [],
+  "primaryDesignSystem": null,
+  "assets": {
+    "签到控制台": {
+      "versions": [
+        {
+          "path": "index.html",
+          "createdAt": "2026-10-03T14:02:51.906Z",
+          "status": "needs-review",
+          "subtitle": "状态、失败原因与 Cookie 更新",
+          "viewport": {
+            "width": 1440,
+            "height": 1100
+          }
+        }
+      ]
+    }
+  },
+  "createdAt": "2026-10-03T14:02:51.909Z",
+  "updatedAt": "2026-10-03T14:02:51.909Z"
+}

@@ -10,6 +10,9 @@ balance_hash.txt
 balance_history.json
 balance_daily.json
 balance_daily.tmp
+dashboard_history.json
+dashboard_state.json
+.dashboard-secret-*
 
 .DS_Store
 cookie.json

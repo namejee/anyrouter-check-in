@@ -171,6 +171,18 @@ python config/convert_cookie.py
 
 ![运行结果](./assets/check-in.png)
 
+### 本地 HTML 控制台
+
+在本地配置好 `config/cookie.json`、安装依赖，并确保 `gh auth login` 已登录你的 GitHub 账号后运行：
+
+```bash
+uv run local_dashboard.py --repo namejee/anyrouter-check-in
+```
+
+打开 `http://127.0.0.1:8765`，查看两个 AnyRouter 账号的最近余额、10 天到账记录和失败原因。页面支持粘贴 Cookie-Editor 导出的 JSON、Cookie 对象或 Cookie 请求头；点击「更新并验证」会先核对账号身份，再更新本地私有配置、同步 `production` 环境的 `ANYROUTER_ACCOUNTS` Secret，并补跑验证。每次只更新所选账号，另一个账号保持自己的配置。本地的其他平台账号不会加入这份 AnyRouter Secret。
+
+控制台仅监听本机地址，不回显已保存的 Cookie。刷新从 Actions artifact 读取记录，并在 `dashboard_history.json` 合并保留 90 天。可用 `--seed-ledger /path/to/balance_daily.json` 导入此前已核查的历史记录；无记录不推测为未到账。默认从 Cookie 时间戳估算 30 天到期；导出提供到期时间时使用实际导出值，站点仍可能提前撤销登录。Cookie 失效后需重新登录导出，页面不能自动延长账号授权。
+
 ## 执行时间
 
 - GitHub Actions 目标执行时间：北京时间 08:00、08:30、09:00、12:07、18:30、22:31，每个时间后 10 分钟再补跑一次，共 12 个计划触发点
