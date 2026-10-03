@@ -150,7 +150,8 @@ jobs:
         if ("${{ steps.checkin.outcome }}" -ne "success") {
           echo "签到脚本报告失败，workflow 将标记为失败。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "- 至少一个账号的 Cookie、api_user 或 WAF 状态需要更新" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "- 上方明细区分登录失效、余额读取失败和签到未确认" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          echo "- 登录失效（HTTP 401）需要重新登录并更新账号 session Cookie；仅刷新 WAF Cookie 无法恢复登录" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
           echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
         } else {
           echo "全部账号执行及余额读取完成；本轮明细见上表。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append

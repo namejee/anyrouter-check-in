@@ -11,6 +11,7 @@ from checkin import (
 	add_cookies_to_browser_context,
 	build_check_in_detail,
 	check_in_account,
+	execute_automatic_check_in_with_playwright,
 	format_check_in_notification,
 	format_run_summary,
 	load_balance_history,
@@ -207,6 +208,68 @@ def test_http_confirmation_without_balance_verification_fails(monkeypatch, mocke
 
 	assert result[0] is False
 	assert result[2]['error'] == 'HTTP 401'
+
+
+def test_unauthorized_balance_read_is_reported_without_exposing_response_body():
+	info = parse_user_info_response(401, 'private response body')
+	detail = build_check_in_detail('GitHub', False, info, info)
+	summary = format_run_summary([detail], '2026-10-03 20:00:00')
+	assert detail['failure_kind'] == 'auth_required'
+	assert detail['after_quota'] is None
+	assert '登录失效（HTTP 401）' in summary
+	assert 'session Cookie' in summary
+	assert 'private response body' not in summary
+	assert '登录失效（HTTP 401）' in format_check_in_notification(detail)
+
+
+@pytest.mark.parametrize('unauthorized', [True, False])
+def test_browser_preserves_auth_failure_or_valid_read_after_unconfirmed_check_in(mocker, unauthorized):
+	manager = mocker.MagicMock()
+	manager.__aenter__.return_value = mocker.Mock()
+	mocker.patch('checkin.async_playwright', return_value=manager)
+	page = mocker.Mock()
+	page.goto = mocker.AsyncMock()
+	page.wait_for_function = mocker.AsyncMock()
+	context = mocker.Mock()
+	context.new_page = mocker.AsyncMock(return_value=page)
+	context.close = mocker.AsyncMock()
+	mocker.patch('checkin.launch_playwright_context', new=mocker.AsyncMock(return_value=context))
+	mocker.patch('checkin.add_cookies_to_browser_context', new=mocker.AsyncMock())
+	before = (
+		parse_user_info_response(401, '')
+		if unauthorized
+		else {
+			'success': True,
+			'quota': 100,
+			'used_quota': 0,
+			'display': 'balance: 100',
+		}
+	)
+	after = {'success': True, 'quota': 125, 'used_quota': 0}
+	reads = mocker.patch('checkin.fetch_user_info_in_browser', new=mocker.AsyncMock(side_effect=[before, after]))
+	check_in = mocker.patch('checkin.execute_check_in_in_browser', new=mocker.AsyncMock(return_value=False))
+	result = asyncio.run(
+		execute_automatic_check_in_with_playwright(
+			'GitHub',
+			AppConfig.load_from_env().get_provider('anyrouter'),
+			{'session': 'test-session'},
+			'123',
+		)
+	)
+	assert result[0] is False
+	context.close.assert_awaited_once()
+	detail = build_check_in_detail('GitHub', *result)
+	if unauthorized:
+		check_in.assert_not_awaited()
+		assert reads.await_count == 1
+		assert detail['failure_kind'] == 'auth_required'
+		assert detail['after_quota'] is None
+	else:
+		check_in.assert_awaited_once()
+		assert reads.await_count == 2
+		assert detail['failure_kind'] == 'check_in_unconfirmed'
+		assert detail['after_quota'] == 125
+		assert detail['check_in_reward'] == 25
 
 
 def test_browser_retry_preserves_the_balance_before_first_check_in(monkeypatch, mocker):

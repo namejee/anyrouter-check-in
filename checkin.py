@@ -194,7 +194,11 @@ async def get_waf_cookies_with_playwright(account_name: str, login_url: str, req
 def parse_user_info_response(status_code: int, response_text: str):
 	"""解析用户信息接口响应"""
 	if status_code != 200:
-		return {'success': False, 'error': f'Failed to get user info: HTTP {status_code}'}
+		return {
+			'success': False,
+			'error': f'Failed to get user info: HTTP {status_code}',
+			'failure_kind': 'auth_required' if status_code == 401 else 'balance_read_failed',
+		}
 
 	try:
 		data = json.loads(response_text)
@@ -510,6 +514,12 @@ async def execute_automatic_check_in_with_playwright(
 					print(user_info_before['display'])
 				elif user_info_before:
 					print(user_info_before.get('error', 'Unknown error'))
+					if user_info_before.get('failure_kind') == 'auth_required':
+						print(
+							f'[FAILED] {account_name}: Login session rejected (HTTP 401); renew the account session cookie'
+						)
+						await context.close()
+						return False, user_info_before, user_info_before
 
 				if user_info_before and user_info_before.get('api_user'):
 					effective_api_user = user_info_before['api_user']
@@ -522,15 +532,14 @@ async def execute_automatic_check_in_with_playwright(
 						effective_api_user,
 					)
 					if not checkin_success:
+						user_info_after = await fetch_user_info_in_browser(page, provider_config, effective_api_user)
+						if user_info_after.get('success'):
+							user_info_after = {
+								**user_info_after,
+								'failure_kind': 'check_in_unconfirmed',
+							}
 						await context.close()
-						return (
-							False,
-							user_info_before,
-							{
-								'success': False,
-								'error': 'Browser check-in request failed',
-							},
-						)
+						return False, user_info_before, user_info_after
 				else:
 					print(f'[INFO] {account_name}: Verifying automatic check-in via browser user info request')
 
@@ -652,6 +661,14 @@ def build_check_in_detail(
 ) -> dict:
 	"""只记录本轮实际读取的余额，不把缺失值补成零或把零变化当成已签到。"""
 	detail = {'name': account_name, 'success': success}
+	detail['failure_kind'] = None
+	if not success:
+		for info in (after, before):
+			if info and info.get('failure_kind') in ('auth_required', 'balance_read_failed', 'check_in_unconfirmed'):
+				detail['failure_kind'] = info['failure_kind']
+				break
+		if detail['failure_kind'] is None:
+			detail['failure_kind'] = 'check_in_unconfirmed'
 	for prefix, info in (('before', before), ('after', after)):
 		if info and info.get('success'):
 			detail[f'{prefix}_quota'] = info['quota']
@@ -720,6 +737,14 @@ def format_run_summary(details: list[dict], executed_at: str) -> str:
 	for detail in details:
 		if detail['previous_checked_at']:
 			lines.append(f'- {detail["name"]} 上次记录（北京时间）：{detail["previous_checked_at"]}')
+		if detail.get('failure_kind') == 'auth_required':
+			lines.append(
+				f'- {detail["name"]}：登录失效（HTTP 401）。重新登录并更新该账号的 session Cookie；仅刷新 WAF Cookie 无法恢复登录。'
+			)
+		elif detail.get('failure_kind') == 'balance_read_failed':
+			lines.append(f'- {detail["name"]}：余额读取失败，无法核实本轮到账。')
+		elif detail.get('failure_kind') == 'check_in_unconfirmed':
+			lines.append(f'- {detail["name"]}：签到未确认完成；已读取的余额仍保留供核查。')
 	return '\n'.join(lines)
 
 
@@ -741,6 +766,8 @@ def format_check_in_notification(detail: dict) -> str:
 		'  📍 签到后',
 		f'     💵 余额: {format_amount(detail["after_quota"])}  |  📊 累计消耗: {format_amount(detail["after_used"])}',
 	]
+	if detail.get('failure_kind') == 'auth_required':
+		lines.append('  登录失效（HTTP 401）：重新登录并更新 session Cookie；仅刷新 WAF Cookie 无法恢复。')
 	if detail['check_in_reward'] is None:
 		lines.append('  ℹ️  余额数据不完整，无法计算本轮额度变化')
 		return '\n'.join(lines)

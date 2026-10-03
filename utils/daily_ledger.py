@@ -17,6 +17,7 @@ DETAIL_FIELDS = (
 	'previous_quota',
 	'previous_checked_at',
 	'since_previous',
+	'failure_kind',
 )
 
 
@@ -28,8 +29,10 @@ def sanitize_detail(detail) -> dict | None:
 	previous = result['previous_checked_at']
 	if not isinstance(previous, str):
 		result['previous_checked_at'] = None
+	if result['failure_kind'] not in ('auth_required', 'balance_read_failed', 'check_in_unconfirmed'):
+		result['failure_kind'] = None
 	for key in DETAIL_FIELDS:
-		if key in ('name', 'success', 'previous_checked_at'):
+		if key in ('name', 'success', 'previous_checked_at', 'failure_kind'):
 			continue
 		value = result[key]
 		if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
@@ -91,9 +94,10 @@ def format_daily_summary(entries: list[dict], executed_at: str, names: list[str]
 		'',
 		'当天任一轮观察到额度增加即记为“有增加”；之后的零变化或使用消耗不会覆盖它。',
 		'跨日区间的增加单独标注，无法确定实际到账日期。无记录不等于没到账；今天尚未结束。',
+		'余额及读取时间取当日最后一次有效读取；最近执行失败时不会把旧余额标成当前余额。',
 		'',
-		'| 日期 | 账号 | 当日额度增加 | 当日最近余额 | 最近读取时间 |',
-		'| --- | --- | --- | ---: | --- |',
+		'| 日期 | 账号 | 当日额度增加 | 当日最近已读取余额 | 最近读取时间 | 最近执行结果 |',
+		'| --- | --- | --- | ---: | --- | --- |',
 	]
 	for offset in range(days - 1, -1, -1):
 		day = (end - timedelta(days=offset)).isoformat()
@@ -126,5 +130,17 @@ def format_daily_summary(entries: list[dict], executed_at: str, names: list[str]
 			balance = f'${latest[1]:.2f}' if latest else '未读取'
 			stamp = latest[0][11:] if latest else '—'
 			safe_name = name.replace('|', '\\|').replace('\n', ' ').replace('\r', ' ')
-			lines.append(f'| {day} | {safe_name} | {status} | {balance} | {stamp} |')
+			execution = '无记录'
+			if observations:
+				last_stamp, last_detail = observations[-1]
+				if last_detail.get('failure_kind') == 'auth_required':
+					execution = '登录失效（HTTP 401）'
+				elif last_detail.get('success') is True:
+					execution = '已确认完成'
+				elif last_detail.get('success') is False:
+					execution = '失败 / 未确认'
+				else:
+					execution = '未记录执行结果'
+				execution += f' {last_stamp[11:]}'
+			lines.append(f'| {day} | {safe_name} | {status} | {balance} | {stamp} | {execution} |')
 	return '\n'.join(lines)

@@ -187,6 +187,7 @@ python config/convert_cookie.py
 - 每次执行保留不含凭据的 90 天到账记录，并在摘要显示最近 10 天：当天任一轮有增加就保留“有增加”，后续零变化不会覆盖；跨日增加单独标注。首次启用或缓存丢失的日期显示无记录，不能据此认定未到账。记录通过独立缓存延续，并作为 Actions artifact 归档 90 天
 - 签到接口返回明确成功且签到后余额读取成功，才把该账号计为完成；HTML 验证页和含糊的成功文本不算成功
 - 任意账号签到失败时，任务会标记为失败，便于及时发现 Cookie、API User 或 WAF 状态异常
+- 用户信息接口返回 HTTP 401 时，摘要会明确标注登录失效，并保留最后有效余额的读取时间；需重新登录更新账号 session Cookie，刷新 WAF Cookie 不能恢复账号授权。当天已观察到的到账仍保留“有增加”，同时显示最近一次执行失败
 - 报 401 错误，请重新获取 cookies，理论 1 个月失效，但有 Bug，详见 [#6](https://github.com/millylee/anyrouter-check-in/issues/6)
 - 请求 200，但出现 Error 1040（08004）：Too many connections，官方数据库问题，目前已修复，但遇到几次了，详见 [#7](https://github.com/millylee/anyrouter-check-in/issues/7)
 

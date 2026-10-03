@@ -15,11 +15,12 @@ def test_daily_positive_survives_later_zero_consumption_and_failed_read():
 	entries = [
 		observation('2026-09-29 08:00:00', after_quota=125, check_in_reward=25),
 		observation('2026-09-29 12:00:00', after_quota=90, check_in_reward=0, usage_increase=35),
-		observation('2026-09-29 18:00:00', after_quota=None, success=False),
+		observation('2026-09-29 18:00:00', after_quota=None, success=False, failure_kind='auth_required'),
 	]
 	summary = format_daily_summary(entries, '2026-09-29 18:00:00', ['GitHub'])
 	assert '| 2026-09-29 | GitHub | 有增加 | $90.00 | 12:00:00 |' in summary
 	assert '| 2026-09-28 | GitHub | 无可核对记录 | 未读取 | — |' in summary
+	assert '| 登录失效（HTTP 401） 18:00:00 |' in summary
 
 
 def test_credit_before_first_read_counts_when_previous_read_is_same_day():
@@ -67,12 +68,19 @@ def test_ledger_retains_90_days_strips_credentials_and_replaces_same_run(tmp_pat
 	path.write_text(json.dumps([old, recent]))
 	monkeypatch.setenv('GITHUB_RUN_ID', '123')
 	monkeypatch.setenv('GITHUB_RUN_ATTEMPT', '1')
-	detail = {'name': 'GitHub', 'after_quota': 125, 'check_in_reward': 25, 'token': 'private'}
+	detail = {
+		'name': 'GitHub',
+		'after_quota': 125,
+		'check_in_reward': 25,
+		'token': 'private',
+		'failure_kind': 'private',
+	}
 	record_balance_run(str(path), [detail], '2026-09-29 08:00:00')
 	entries = record_balance_run(str(path), [detail], '2026-09-29 08:00:00')
 	assert len(entries) == 2
 	assert entries[-1]['run_id'] == '123:1'
 	assert 'private' not in path.read_text()
+	assert entries[-1]['details'][0]['failure_kind'] is None
 	assert not path.with_suffix('.tmp').exists()
 	assert json.loads(path.read_text()) == entries
 
