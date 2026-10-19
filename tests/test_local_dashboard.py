@@ -112,6 +112,73 @@ def test_sync_failure_preserves_existing_local_config(configured):
 	assert dashboard.config() == accounts
 
 
+def test_platform_disabled_is_explained_separately_from_cookie_failure(configured, monkeypatch):
+	from types import SimpleNamespace
+
+	root, _ = configured
+	monkeypatch.setattr(
+		'local_dashboard.subprocess.run',
+		lambda *args, **kwargs: SimpleNamespace(
+			returncode=1, stderr='HTTP 422: Actions has been disabled for this repository.', stdout=''
+		),
+	)
+	dashboard = Dashboard(root)
+	with pytest.raises(DashboardError, match='任务没有启动'):
+		dashboard._run(['gh', 'workflow', 'run', 'checkin.yml'])
+	assert dashboard.state()['platform_issue']['kind'] == 'actions_disabled'
+	assert 'private' not in dashboard.state_path.read_text()
+
+
+def test_old_success_does_not_hide_a_four_day_execution_gap(configured):
+	root, _ = configured
+	dashboard = Dashboard(root)
+	old = datetime.now(BEIJING) - timedelta(days=4)
+	dashboard.history = merge_history(
+		[
+			{
+				'run_id': '123:1',
+				'executed_at': old.strftime('%Y-%m-%d %H:%M:%S'),
+				'details': [{'name': 'GitHub', 'success': True, 'after_quota': 100}],
+			}
+		]
+	)
+	dashboard.cache['runs'] = [
+		{
+			'databaseId': 123,
+			'number': 1,
+			'status': 'completed',
+			'conclusion': 'success',
+			'event': 'schedule',
+			'createdAt': old.isoformat(),
+		}
+	]
+	state = dashboard.state()
+	assert state['accounts'][0]['stale'] is True
+	assert state['hosted_stale'] is True
+
+
+def test_new_hosted_run_clears_prior_platform_pause(configured):
+	root, _ = configured
+	old = (datetime.now(BEIJING) - timedelta(hours=2)).strftime('%Y-%m-%d %H:%M:%S')
+	new_run = {
+		'databaseId': 4,
+		'number': 4,
+		'status': 'completed',
+		'conclusion': 'success',
+		'event': 'workflow_dispatch',
+		'createdAt': datetime.now(BEIJING).isoformat(),
+	}
+
+	def runner(args, input_text=None):
+		return json.dumps({'artifacts': []}) if args[1] == 'api' else json.dumps([new_run])
+
+	dashboard = Dashboard(root, runner=runner)
+	dashboard.cache['platform_issue'] = {'kind': 'actions_disabled', 'observed_at': old}
+	dashboard.refresh()
+	assert dashboard.state()['platform_issue'] is None
+	assert dashboard.state()['hosted_stale'] is False
+
+
 def test_state_keeps_earlier_credit_and_balance_while_explaining_latest_auth_failure(configured):
 	root, _ = configured
 	dashboard = Dashboard(root)

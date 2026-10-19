@@ -129,7 +129,11 @@ def merge_history(*sources):
 			except (KeyError, ValueError, TypeError):
 				continue
 			run_id = entry.get('run_id')
-			if not isinstance(run_id, str) or not re.fullmatch(r'\d+:\d+', run_id) or not cutoff <= stamp <= now():
+			if (
+				not isinstance(run_id, str)
+				or not re.fullmatch(r'(?:\d+:\d+|local:[a-f0-9-]{36})', run_id)
+				or not cutoff <= stamp <= now()
+			):
 				continue
 			merged[run_id] = {
 				'run_id': run_id,
@@ -203,7 +207,12 @@ class Dashboard:
 			raise DashboardError('无法运行 GitHub CLI。请检查 gh 已安装并登录，以及网络连接。') from exc
 		if result.returncode:
 			message = 'GitHub 操作失败，请检查 gh 登录权限及网络。'
-			if 'auth' in result.stderr.lower() or '401' in result.stderr or '403' in result.stderr:
+			if 'actions has been disabled' in result.stderr.lower():
+				message = 'GitHub 已暂停此仓库的 Actions，任务没有启动。请在仓库 Actions 页面重新启用；这不代表 AnyRouter Cookie 失效。'
+				with self.lock:
+					self.cache['platform_issue'] = {'kind': 'actions_disabled', 'observed_at': now()}
+					write_private_json(self.state_path, self.cache)
+			elif 'auth' in result.stderr.lower() or '401' in result.stderr or '403' in result.stderr:
 				message = 'GitHub 授权不可用，请在终端运行 gh auth login 后重试。'
 			raise DashboardError(message)
 		return result.stdout
@@ -355,6 +364,11 @@ class Dashboard:
 					write_private_json(self.history_path, self.history)
 			break
 		with self.lock:
+			issue = self.cache.get('platform_issue')
+			if issue:
+				observed_at = datetime.fromisoformat(issue['observed_at']).replace(tzinfo=BEIJING)
+				if any(datetime.fromisoformat(run['createdAt'].replace('Z', '+00:00')) > observed_at for run in runs):
+					self.cache.pop('platform_issue', None)
 			self.cache.update(runs=runs, refreshed_at=now())
 			write_private_json(self.state_path, self.cache)
 
@@ -398,6 +412,8 @@ class Dashboard:
 
 	def state(self):
 		with self.lock:
+			# A local emergency run may have written fresh observations since this server started.
+			self.history = merge_history(self.history, read_json(self.history_path, []))
 			history, cache, job = copy.deepcopy(self.history), copy.deepcopy(self.cache), copy.deepcopy(self.job)
 		accounts = []
 		for aid, account in self.configured():
@@ -413,6 +429,9 @@ class Dashboard:
 			)
 			meta = cache.get('cookie_meta', {}).get(aid, {})
 			cookies = account.get('cookies') if isinstance(account.get('cookies'), dict) else {}
+			stale = not latest or datetime.fromisoformat(now()) - datetime.fromisoformat(
+				latest[0]['executed_at']
+			) > timedelta(hours=24)
 			accounts.append(
 				{
 					'id': aid,
@@ -422,6 +441,10 @@ class Dashboard:
 					'success': latest[1]['success'] if latest else None,
 					'failure_kind': latest[1].get('failure_kind') if latest else None,
 					'checked_at': latest[0]['executed_at'] if latest else None,
+					'stale': stale,
+					'execution_source': ('local' if latest[0]['run_id'].startswith('local:') else 'github')
+					if latest
+					else None,
 					'last_auth_failure_at': failure[0]['executed_at'] if failure else None,
 					'cookie_expires_at': meta.get('expires_at') or estimated_expiration(cookies),
 					'expiry_estimated': not bool(meta.get('expires_at')),
@@ -471,6 +494,13 @@ class Dashboard:
 			}
 			for run in cache.get('runs', [])[:8]
 		]
+		latest_run = cache.get('runs', [None])[0] if cache.get('runs') else None
+		latest_run_at = (
+			datetime.fromisoformat(latest_run['createdAt'].replace('Z', '+00:00')).astimezone(BEIJING)
+			if latest_run
+			else None
+		)
+		hosted_stale = latest_run_at is not None and datetime.now(BEIJING) - latest_run_at > timedelta(hours=24)
 		return {
 			'accounts': accounts,
 			'daily': daily,
@@ -479,6 +509,9 @@ class Dashboard:
 			'refreshed_at': cache.get('refreshed_at'),
 			'today': end.isoformat(),
 			'repo': self.repo,
+			'platform_issue': cache.get('platform_issue'),
+			'hosted_stale': hosted_stale,
+			'last_hosted_run_at': latest_run_at.strftime('%Y-%m-%d %H:%M:%S') if latest_run_at else None,
 		}
 
 

@@ -13,6 +13,7 @@ balance_daily.tmp
 dashboard_history.json
 dashboard_state.json
 .dashboard-secret-*
+local_checkin_state/
 
 .DS_Store
 cookie.json

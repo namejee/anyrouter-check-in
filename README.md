@@ -183,6 +183,16 @@ uv run local_dashboard.py --repo namejee/anyrouter-check-in
 
 控制台仅监听本机地址，不回显已保存的 Cookie。刷新从 Actions artifact 读取记录，并在 `dashboard_history.json` 合并保留 90 天。可用 `--seed-ledger /path/to/balance_daily.json` 导入此前已核查的历史记录；无记录不推测为未到账。默认从 Cookie 时间戳估算 30 天到期；导出提供到期时间时使用实际导出值，站点仍可能提前撤销登录。Cookie 失效后需重新登录导出，页面不能自动延长账号授权。
 
+超过 24 小时没有新执行时，控制台显示记录过期，并提示自动签到中断；旧任务成功不代表今天已签到。GitHub 拒绝启动并返回 `Actions has been disabled` 时，单独提示平台暂停，与 AnyRouter 的 HTTP 401 登录失效区分。重新启用后出现新的执行记录，平台暂停提示会清除。
+
+GitHub 无法执行时，可在本机临时签到：
+
+```bash
+uv run local_checkin.py
+```
+
+脚本只运行 `config/cookie.json` 中的 AnyRouter 账号，使用本机 Chrome 或已安装的 Playwright Chromium；无须将 Cookie 写入命令或源码。记录保存在忽略提交的 `local_checkin_state/` 并合并到本地控制台，使用 `local:` 前缀标明来源。当天已有增加记录时跳过重复执行，可用 `--force` 再次核验。此命令不会建立新的后台定时任务。
+
 ## 执行时间
 
 - GitHub Actions 目标执行时间：北京时间 08:00、08:30、09:00、12:07、18:30、22:31，每个时间后 10 分钟再补跑一次，共 12 个计划触发点

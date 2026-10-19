@@ -56,7 +56,7 @@ def record_balance_run(path: str, details: list[dict], executed_at: str) -> list
 	run_id = (
 		f'{os.environ["GITHUB_RUN_ID"]}:{os.getenv("GITHUB_RUN_ATTEMPT", "1")}'
 		if os.getenv('GITHUB_RUN_ID')
-		else str(uuid4())
+		else f'local:{uuid4()}'
 	)
 	retained = []
 	for entry in entries:
