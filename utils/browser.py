@@ -189,6 +189,20 @@ def _ensure_binary_path(settings: BrowserLoginSettings) -> None:
 		os.environ['CLOAKBROWSER_BINARY_PATH'] = settings.cloakbrowser_binary_path
 
 
+async def launch_browser_with_retry(launcher, *args, **kwargs):
+	"""只重试浏览器启动崩溃，不重复账号登录或签到请求。"""
+	for attempt in range(3):
+		try:
+			return await launcher(*args, **kwargs)
+		except Exception as error:
+			message = str(error)
+			transient = 'SIGSEGV' in message or 'Target page, context or browser has been closed' in message
+			if not transient or attempt == 2:
+				raise
+			print(f'[WARN] Browser crashed during startup; retrying launch ({attempt + 1}/2)')
+			await asyncio.sleep(2)
+
+
 class _EphemeralBrowserContext:
 	def __init__(self, context: BrowserContext, browser) -> None:
 		self._context = context
@@ -229,12 +243,14 @@ async def launch_login_context(settings: BrowserLoginSettings, *, use_proxy: boo
 		from cloakbrowser import launch_persistent_context_async
 
 		settings.profile_dir.mkdir(parents=True, exist_ok=True)
-		return await launch_persistent_context_async(str(settings.profile_dir), **launch_kwargs)
+		return await launch_browser_with_retry(
+			launch_persistent_context_async, str(settings.profile_dir), **launch_kwargs
+		)
 
 	from cloakbrowser import launch_async
 
 	context_kwargs = {'viewport': launch_kwargs.pop('viewport')}
-	browser = await launch_async(**launch_kwargs)
+	browser = await launch_browser_with_retry(launch_async, **launch_kwargs)
 	context = await browser.new_context(**context_kwargs)
 	return _EphemeralBrowserContext(context, browser)
 

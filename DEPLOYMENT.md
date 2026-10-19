@@ -2,7 +2,7 @@
 
 签到脚本采用 [sickpoet/anyag-checkin](https://github.com/sickpoet/anyag-checkin) 的
 [`cb7cc6e`](https://github.com/sickpoet/anyag-checkin/commit/cb7cc6ee2ea54f5df486f860be6f22559c4f9468) 版本。
-`checkin.py`、`utils/`、依赖锁文件和测试均保留上游原版。
+登录与签到流程沿用上游；本仓库增加浏览器启动崩溃的有限重试和固定代理部署适配。依赖锁文件保持上游版本。
 
 ## 当前方案
 
@@ -31,6 +31,11 @@
 
 ## 验证与运行
 
+固定代理保存在 `production` 的 `FIXED_PROXY_URL` Secret 中，例如
+`http://user:password@host:port` 或 `socks5://user:password@host:port`。
+代理通过 Runner 内的 mihomo 转接，支持带认证的 HTTP(S) 和 SOCKS5；只供配置为使用代理的站点使用。
+用户名／密码含 `@`、`:`、`#` 等特殊字符时，应先进行 URL 编码。
+
 在 [AnyRouter 自动签到](https://github.com/namejee/anyrouter-check-in/actions/workflows/checkin.yml)
 选择 Run workflow，`providers` 填 `anyrouter,agentrouter`，其余保持默认。
 这样手动测试会立即执行，避免进入上游的定时等待。
@@ -47,6 +52,9 @@
 - 移除旧账号配置中的 WAF Cookie（`acw_tc`、`cdn_sec_tc`、`acw_sc__v2`），使用上游本次运行新获取的值；保留 session 等登录凭据。
 - 启动时为密码、邮箱和 Cookie 注册日志遮罩。
 - 不上传浏览器登录 Profile 到 Actions 公共缓存；本方案的 AnyRouter Cookie 模式与 AgentRouter 非持久登录不需要该缓存。
+- 浏览器仅在启动发生 SIGSEGV／进程提前关闭时最多重试两次；不会因此重复登录或签到。
+- 关闭浏览器二进制后台自动更新，缓存与依赖锁版本绑定。
+- 任一账号在日志中报告失败时，整个 Actions 任务标记为失败，便于发现部分账号失败。
 
 ## 回退
 

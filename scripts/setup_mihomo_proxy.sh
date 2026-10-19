@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# 通过 mihomo 拉取订阅、启动本地代理并探测可用节点。
+# 通过 mihomo 接入固定代理或订阅，启动本地代理并探测可用节点。
 # 环境变量:
 #   PROXY_SUBSCRIPTION_URL  订阅链接（必填才启用）
+#   FIXED_PROXY_URL         固定 HTTP(S)/SOCKS5 代理 URL（优先于订阅）
 #   PROXY_TEST_URL          探测目标，默认 https://www.google.com/generate_204
 #   PROXY_REQUIRED          true 时探测失败则退出 1
 #   PROXY_PORT              本地 mixed-port，默认 7890
 
 set -euo pipefail
+umask 077
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -z "${PROXY_SUBSCRIPTION_URL:-}" ]]; then
-	echo "[INFO] PROXY_SUBSCRIPTION_URL not set, skip proxy setup"
+if [[ -z "${PROXY_SUBSCRIPTION_URL:-}" && -z "${FIXED_PROXY_URL:-}" ]]; then
+	echo "[INFO] No proxy configured, skip proxy setup"
 	exit 0
 fi
 
@@ -36,6 +39,9 @@ gunzip -f "${ARCHIVE}"
 chmod +x "mihomo-linux-amd64-${MIHOMO_VERSION}"
 MIHOMO_BIN="${PROXY_DIR}/mihomo-linux-amd64-${MIHOMO_VERSION}"
 
+if [[ -n "${FIXED_PROXY_URL:-}" ]]; then
+	python "${SCRIPT_DIR}/fixed_proxy_config.py" config.yaml
+else
 cat > config.yaml <<EOF
 mixed-port: ${PROXY_PORT}
 allow-lan: false
@@ -68,6 +74,7 @@ proxy-groups:
 rules:
   - MATCH,CHECKIN
 EOF
+fi
 
 echo "[INFO] Starting mihomo on 127.0.0.1:${PROXY_PORT}..."
 nohup "${MIHOMO_BIN}" -d "${PROXY_DIR}" -f config.yaml > mihomo.log 2>&1 &
@@ -86,7 +93,7 @@ done
 
 if [[ "${READY}" != "true" ]]; then
 	echo "[FAILED] Proxy health check failed for ${PROXY_TEST_URL}"
-	tail -n 30 mihomo.log || true
+	# 代理日志可能带认证配置，不将其输出到公开 Actions 日志。
 	if [[ -f mihomo.pid ]]; then
 		kill "$(cat mihomo.pid)" 2>/dev/null || true
 	fi

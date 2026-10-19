@@ -24,6 +24,7 @@ from utils.browser import (
 	BrowserLoginResult,
 	has_session_cookie,
 	is_logged_in,
+	launch_browser_with_retry,
 	launch_login_context,
 	load_browser_login_settings,
 	login_with_email_form,
@@ -254,7 +255,7 @@ async def get_waf_cookies_with_browser(
 	proxy = get_playwright_proxy(use_proxy=use_proxy)
 	if proxy:
 		launch_kwargs['proxy'] = proxy
-	browser = await launch_async(**launch_kwargs)
+	browser = await launch_browser_with_retry(launch_async, **launch_kwargs)
 
 	try:
 		page = await browser.new_page()

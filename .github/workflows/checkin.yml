@@ -44,6 +44,7 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: 1
+      CLOAKBROWSER_AUTO_UPDATE: 'false'
       DEBUG_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true' && 'true' || 'false' }}
     steps:
     - uses: actions/checkout@v6
@@ -89,9 +90,7 @@ jobs:
       id: cloakbrowser-cache
       with:
         path: ~/.cloakbrowser
-        key: ${{ runner.os }}-cloakbrowser-v1
-        restore-keys: |
-          ${{ runner.os }}-cloakbrowser-
+        key: ${{ runner.os }}-cloakbrowser-${{ runner.arch }}-${{ hashFiles('uv.lock') }}-v2
 
     - name: 安装 CloakBrowser
       run: |
@@ -112,9 +111,10 @@ jobs:
     - name: 配置代理
       env:
         PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
-        PROXY_TEST_URL: https://www.google.com/generate_204
+        FIXED_PROXY_URL: ${{ secrets.FIXED_PROXY_URL }}
+        PROXY_TEST_URL: https://agentrouter.org/login
         MIHOMO_VERSION: v1.19.27
-        PROXY_REQUIRED: false
+        PROXY_REQUIRED: ${{ (secrets.FIXED_PROXY_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '') && 'true' || 'false' }}
       run: bash scripts/setup_mihomo_proxy.sh
 
     - name: 执行签到
@@ -149,7 +149,9 @@ jobs:
         BARK_KEY: ${{ secrets.BARK_KEY }}
         BARK_SERVER: ${{ secrets.BARK_SERVER }}
       run: |
-        xvfb-run -a --server-args="-screen 0 1920x1080x24" uv run python - <<'PY'
+        set -euo pipefail
+        umask 077
+        xvfb-run -a --server-args="-screen 0 1920x1080x24" uv run python - <<'PY' | tee "$RUNNER_TEMP/checkin-result.log"
         import json
         import os
         import runpy
@@ -189,6 +191,10 @@ jobs:
             os.environ[key] = json.dumps(accounts)
         runpy.run_path('checkin.py', run_name='__main__')
         PY
+        if grep -Eq '^\[FAILED\]|❌ 签到失败|❌ 执行异常' "$RUNNER_TEMP/checkin-result.log"; then
+          echo "::error::至少一个账号执行失败，请检查逐账号结果。"
+          exit 1
+        fi
 
     - name: 上传调试截图
       if: always() && env.DEBUG_MODE == 'true'
