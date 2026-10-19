@@ -1,31 +1,119 @@
 import os
 import smtplib
 from email.mime.text import MIMEText
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 
 
 class NotificationKit:
-	def __init__(self):
-		self.email_user: str = os.getenv('EMAIL_USER', '')
-		self.email_pass: str = os.getenv('EMAIL_PASS', '')
-		self.email_to: str = os.getenv('EMAIL_TO', '')
-		self.email_sender: str = os.getenv('EMAIL_SENDER', '')
-		self.smtp_server: str = os.getenv('CUSTOM_SMTP_SERVER', '')
-		self.pushplus_token = os.getenv('PUSHPLUS_TOKEN')
-		self.server_push_key = os.getenv('SERVERPUSHKEY')
-		self.dingding_webhook = os.getenv('DINGDING_WEBHOOK')
-		self.feishu_webhook = os.getenv('FEISHU_WEBHOOK')
-		self.weixin_webhook = os.getenv('WEIXIN_WEBHOOK')
-		self.gotify_url = os.getenv('GOTIFY_URL')
-		self.gotify_token = os.getenv('GOTIFY_TOKEN')
+	"""多平台通知工具。
+
+	所有配置项都是**惰性属性**，在真正发送时才读取环境变量，而不是在实例化时快照。
+
+	注意：`notify` 是本模块级单例，会在 `utils.notify` 被导入时就创建。如果在这里快照
+	环境变量，那么任何「先导入 utils.notify、后调用 load_dotenv()」的入口（checkin.py
+	即是如此）都会拿到一份空配置，导致本地 .env 里配好的通知渠道全部失效，且失败信息
+	会误导为 "xxx not configured"。保持惰性读取可以让配置与导入顺序无关。
+	"""
+
+	@property
+	def email_user(self) -> str:
+		return os.getenv('EMAIL_USER', '')
+
+	@property
+	def email_pass(self) -> str:
+		return os.getenv('EMAIL_PASS', '')
+
+	@property
+	def email_to(self) -> str:
+		return os.getenv('EMAIL_TO', '')
+
+	@property
+	def email_sender(self) -> str:
+		return os.getenv('EMAIL_SENDER', '')
+
+	@property
+	def smtp_server(self) -> str:
+		return os.getenv('CUSTOM_SMTP_SERVER', '')
+
+	@property
+	def pushplus_token(self) -> str | None:
+		return os.getenv('PUSHPLUS_TOKEN')
+
+	@property
+	def server_push_key(self) -> str | None:
+		return os.getenv('SERVERPUSHKEY')
+
+	@property
+	def dingding_webhook(self) -> str | None:
+		return os.getenv('DINGDING_WEBHOOK')
+
+	@property
+	def feishu_webhook(self) -> str | None:
+		return os.getenv('FEISHU_WEBHOOK')
+
+	@property
+	def weixin_webhook(self) -> str | None:
+		return os.getenv('WEIXIN_WEBHOOK')
+
+	@property
+	def gotify_url(self) -> str | None:
+		return os.getenv('GOTIFY_URL')
+
+	@property
+	def gotify_token(self) -> str | None:
+		return os.getenv('GOTIFY_TOKEN')
+
+	@property
+	def gotify_priority(self) -> int:
 		gotify_priority_env = os.getenv('GOTIFY_PRIORITY', '9')
-		self.gotify_priority = int(gotify_priority_env) if gotify_priority_env.strip() else 9
-		self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
-		self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
-		self.bark_key = os.getenv('BARK_KEY')
-		self.bark_server = os.getenv('BARK_SERVER', 'https://api.day.app')
+		return int(gotify_priority_env) if gotify_priority_env.strip() else 9
+
+	@property
+	def telegram_bot_token(self) -> str | None:
+		return os.getenv('TELEGRAM_BOT_TOKEN')
+
+	@property
+	def telegram_chat_id(self) -> str | None:
+		return os.getenv('TELEGRAM_CHAT_ID')
+
+	@property
+	def bark_key(self) -> str | None:
+		return os.getenv('BARK_KEY')
+
+	@property
+	def bark_server(self) -> str:
+		return os.getenv('BARK_SERVER', 'https://api.day.app')
+
+	def _post_json(self, service: str, url: str, data: dict[str, Any]) -> httpx.Response:
+		with httpx.Client(timeout=30.0) as client:
+			response = client.post(url, json=data)
+
+		if response.status_code >= 400:
+			raise RuntimeError(f'{service} request failed: HTTP {response.status_code}')
+
+		try:
+			payload = response.json()
+		except ValueError:
+			return response
+
+		if not isinstance(payload, dict):
+			return response
+
+		error_msg = payload.get('errmsg') or payload.get('message') or payload.get('msg') or payload.get('error')
+		if payload.get('ok') is False:
+			raise RuntimeError(f'{service} request failed: {error_msg or payload.get("description") or "ok=false"}')
+		if payload.get('errcode') not in (None, 0):
+			raise RuntimeError(f'{service} request failed: {error_msg or payload.get("errcode")}')
+		if payload.get('StatusCode') not in (None, 0):
+			raise RuntimeError(f'{service} request failed: {error_msg or payload.get("StatusCode")}')
+		if payload.get('code') not in (None, 0, 200):
+			raise RuntimeError(f'{service} request failed: {error_msg or payload.get("code")}')
+		if payload.get('ret') not in (None, 0, 1, 200):
+			raise RuntimeError(f'{service} request failed: {error_msg or payload.get("ret")}')
+
+		return response
 
 	def send_email(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
 		if not self.email_user or not self.email_pass or not self.email_to:
@@ -51,24 +139,21 @@ class NotificationKit:
 			raise ValueError('PushPlus Token not configured')
 
 		data = {'token': self.pushplus_token, 'title': title, 'content': content, 'template': 'html'}
-		with httpx.Client(timeout=30.0) as client:
-			client.post('http://www.pushplus.plus/send', json=data)
+		self._post_json('PushPlus', 'http://www.pushplus.plus/send', data)
 
 	def send_serverPush(self, title: str, content: str):
 		if not self.server_push_key:
 			raise ValueError('Server Push key not configured')
 
 		data = {'title': title, 'desp': content}
-		with httpx.Client(timeout=30.0) as client:
-			client.post(f'https://sctapi.ftqq.com/{self.server_push_key}.send', json=data)
+		self._post_json('Server Push', f'https://sctapi.ftqq.com/{self.server_push_key}.send', data)
 
 	def send_dingtalk(self, title: str, content: str):
 		if not self.dingding_webhook:
 			raise ValueError('DingTalk Webhook not configured')
 
 		data = {'msgtype': 'text', 'text': {'content': f'{title}\n{content}'}}
-		with httpx.Client(timeout=30.0) as client:
-			client.post(self.dingding_webhook, json=data)
+		self._post_json('DingTalk', self.dingding_webhook, data)
 
 	def send_feishu(self, title: str, content: str):
 		if not self.feishu_webhook:
@@ -81,16 +166,14 @@ class NotificationKit:
 				'header': {'template': 'blue', 'title': {'content': title, 'tag': 'plain_text'}},
 			},
 		}
-		with httpx.Client(timeout=30.0) as client:
-			client.post(self.feishu_webhook, json=data)
+		self._post_json('Feishu', self.feishu_webhook, data)
 
 	def send_wecom(self, title: str, content: str):
 		if not self.weixin_webhook:
 			raise ValueError('WeChat Work Webhook not configured')
 
 		data = {'msgtype': 'text', 'text': {'content': f'{title}\n{content}'}}
-		with httpx.Client(timeout=30.0) as client:
-			client.post(self.weixin_webhook, json=data)
+		self._post_json('WeChat Work', self.weixin_webhook, data)
 
 	def send_gotify(self, title: str, content: str):
 		if not self.gotify_url or not self.gotify_token:
@@ -105,8 +188,7 @@ class NotificationKit:
 		data = {'title': title, 'message': content, 'priority': priority}
 
 		url = f'{self.gotify_url}?token={self.gotify_token}'
-		with httpx.Client(timeout=30.0) as client:
-			client.post(url, json=data)
+		self._post_json('Gotify', url, data)
 
 	def send_telegram(self, title: str, content: str):
 		if not self.telegram_bot_token or not self.telegram_chat_id:
@@ -115,8 +197,7 @@ class NotificationKit:
 		message = f'<b>{title}</b>\n\n{content}'
 		data = {'chat_id': self.telegram_chat_id, 'text': message, 'parse_mode': 'HTML'}
 		url = f'https://api.telegram.org/bot{self.telegram_bot_token}/sendMessage'
-		with httpx.Client(timeout=30.0) as client:
-			client.post(url, json=data)
+		self._post_json('Telegram', url, data)
 
 	def send_bark(self, title: str, content: str):
 		if not self.bark_key:
@@ -133,8 +214,7 @@ class NotificationKit:
 			'group': 'AnyRouter',
 		}
 
-		with httpx.Client(timeout=30.0) as client:
-			client.post(url, json=data)
+		self._post_json('Bark', url, data)
 
 	def push_message(self, title: str, content: str, msg_type: Literal['text', 'html'] = 'text'):
 		notifications = [

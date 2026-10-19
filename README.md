@@ -1,5 +1,7 @@
 # Any Router 多账号自动签到
 
+> 本仓库已部署 sickpoet 维护版；当前账号配置、手动验证和回退方式见 [部署说明](DEPLOYMENT.md)。
+
 [![GitHub Actions](https://github.com/millylee/anyrouter-check-in/workflows/PR%20Quality%20Checks/badge.svg)](https://github.com/millylee/anyrouter-check-in/actions)
 [![codecov](https://codecov.io/gh/millylee/anyrouter-check-in/branch/main/graph/badge.svg)](https://codecov.io/gh/millylee/anyrouter-check-in)
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/millylee/anyrouter-check-in/main.svg)](https://results.pre-commit.ci/latest/github/millylee/anyrouter-check-in/main)
@@ -13,7 +15,7 @@
 
 **维护开源不易，如果本项目帮助到了你，请帮忙点个 Star，谢谢!**
 
-用于 Claude Code 中转站 Any Router 网站多账号每日签到，一次 $25，限时注册即送 100 美金，【[anyrouter注册](https://anyrouter.top/register?aff=0W9A)】,【[agentrouter注册](https://agentrouter.org/register?aff=JDs6)】。业界良心，支持 Claude Sonnet 4.5、GPT-5-Codex、Claude Code 百万上下文（使用 `/model sonnet[1m]` 开启），`gemini-2.5-pro` 模型。
+用于 Claude Code 中转站 Any Router 网站多账号每日签到，一次 $25，限时注册即送 100 美金，[点击这里注册](https://anyrouter.top/register?aff=gSsN)。业界良心，支持 Claude Sonnet 4.5、GPT-5-Codex、Claude Code 百万上下文（使用 `/model sonnet[1m]` 开启），`gemini-2.5-pro` 模型。
 
 ## 功能特性
 
@@ -30,44 +32,19 @@
 
 ### 2. 获取账号信息
 
-对于 GitHub OAuth 和 LinuxDO OAuth 账号，直接配置登录后的完整 Cookie 即可复用登录态；GitHub Actions 不会尝试重新执行 OAuth 登录（可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/)）。
+对于每个需要签到的账号，你需要获取：(可借助 [在线 Secrets 配置生成器](https://millylee.github.io/anyrouter-check-in/))
 
-1. **Cookies**: 用于快速身份验证
-2. **API User**（可选）：用于请求头的 `new-api-user` 参数，可由用户信息接口自动获取
-3. **用户名/密码**（可选）：仅适用于站点提供原生账号密码登录的账号，不适用于 GitHub/LinuxDO OAuth
+1. **Cookies**: 用于身份验证
+2. **API User**: 用于请求头的 new-api-user 参数（自己配置其它平台时该值需要注意匹配）
 
 #### 获取 Cookies：
 
-1. 打开浏览器，访问对应站点（`https://anyrouter.top/` 或 `https://agentrouter.org/`）
-2. 使用 GitHub 或 LinuxDO 登录你的账户
+1. 打开浏览器，访问 https://anyrouter.top/
+2. 登录你的账户
 3. 打开开发者工具 (F12)
 4. 切换到 "Application" 或 "存储" 选项卡
 5. 找到 "Cookies" 选项
 6. 复制所有 cookies
-
-如果你是在 GitHub Actions 中运行，且站点开启了 WAF/人机校验，建议把相关 WAF cookies 也一起写进 `cookies`：
-
-- `anyrouter`：建议额外填写 `acw_tc`、`cdn_sec_tc`、`acw_sc__v2`
-- `agentrouter`：建议额外填写 `acw_tc`
-
-脚本会优先复用你提供的全部 cookies（包括 WAF cookies）；缺少 WAF cookies 时，才会尝试在运行时用 Playwright 获取。
-
-#### 需要重新登录的账号
-
-如果其他平台的 Cookie 会频繁失效，可为该账号增加 `credentials`（也兼容 `email`）字段：
-
-```json
-{
-  "name": "需要重新登录的 AgentRouter",
-  "provider": "agentrouter.org",
-  "credentials": {
-    "username": "你的用户名或邮箱",
-    "password": "你的密码"
-  }
-}
-```
-
-脚本会先尝试 Cookie；收到 401 或 WAF 拦截后，在浏览器上下文中重新登录。若站点启用了 Turnstile，人机验证仍需站点页面能够自动通过；脚本不会绕过验证码。
 
 #### 获取 API User：
 
@@ -83,58 +60,31 @@
    - Name: `ANYROUTER_ACCOUNTS`
    - Value: 你的多账号配置数据
 
-### 4. 快速生成配置（推荐）
-
-项目提供了模板文件和转换脚本，可以快速生成 GitHub Secret 所需的单行 JSON：
-
-```bash
-# 1. 将模板文件重命名为 cookie.json
-cp config/cookie.templete.json config/cookie.json
-
-# 2. 编辑 cookie.json，填入你的账号信息（session、api_user 等）
-
-# 3. 运行转换脚本，输出单行 JSON
-python config/convert_cookie.py
-```
-
-脚本会将 `config/cookie.json` 的内容压缩为一行输出，直接复制粘贴到 GitHub Environment Secret 的 `ANYROUTER_ACCOUNTS` 值中即可。
-
-> 注：`config/cookie.json` 已被 `.gitignore` 忽略，不会被提交到仓库。
-
-### 5. 多账号配置格式
+### 4. 多账号配置格式
 
 支持单个与多个账号配置，可选 `name` 和 `provider` 字段：
 
 ```json
 [
-    {
-      "name": "GitHub账号",
-      "provider": "anyrouter.top",
-      "cookies": {
-        "session": "你的session值",
-        "acw_tc": "你的acw_tc值",
-        "cdn_sec_tc": "你的cdn_sec_tc值",
-        "acw_sc__v2": "你的acw_sc__v2值"
-      },
-      "api_user": "你的api_user值"
-    },
-    {
-      "name": "LinuxDO账号",
-      "provider": "agentrouter.org",
-      "cookies": {
-        "session": "你的session值",
-        "acw_tc": "你的acw_tc值"
-      },
-      "api_user": "你的api_user值"
-    }
-  ]
+  {
+    "name": "我的主账号",
+    "email": "account1@example.com",
+    "password": "account1_password"
+  },
+  {
+    "name": "备用账号",
+    "provider": "agentrouter",
+    "email": "account2@example.com",
+    "password": "account2_password"
+  }
+]
 ```
 
 **字段说明**：
 
-- `cookies` (可选)：用于快速身份验证的 cookies 数据
-- `credentials` / `email` (可选)：包含 `username` 和 `password`，用于支持密码登录的平台重新登录
-- `api_user` (可选)：用于请求头的 `new-api-user` 参数；登录后可自动从用户信息中获取
+- `email` + `password`：推荐的浏览器登录方式，登录成功后会自动获取 cookies 与用户标识
+- `cookies`：兼容旧版的 session cookies 登录方式
+- `api_user`：session cookies 登录时用于请求头的 new-api-user 参数；邮箱密码登录可省略
 - `provider` (可选)：指定使用的服务商，默认为 `anyrouter`
 - `name` (可选)：自定义账号显示名称，用于通知和日志中标识账号
 
@@ -144,7 +94,7 @@ python config/convert_cookie.py
 - 如果未提供 `name` 字段，会使用 `Account 1`、`Account 2` 等默认名称
 - `anyrouter` 与 `agentrouter` 配置已内置，无需填写
 
-接下来获取 cookies 与 api_user 的值。
+如果使用 session cookies 登录，接下来获取 cookies 与 api_user 的值。
 
 通过 F12 工具，切到 Application 面板，拿到 session 的值，最好重新登录下，该值 1 个月有效期，但有可能提前失效，失效后报 401 错误，到时请再重新获取。
 
@@ -154,14 +104,36 @@ python config/convert_cookie.py
 
 ![获取 api_user](./assets/request-api-user.png)
 
-### 6. 启用 GitHub Actions
+#### 增量账号配置（可选）
+
+如果只想修正或新增**某一个**账号，而不想重写整个 `ANYROUTER_ACCOUNTS`（GitHub secret 只写不可读，读不回原值），可以额外配置一个 `ANYROUTER_ACCOUNTS_EXTRA` secret：
+
+- **同名覆盖**：按 `name` 匹配已有账号，做字段级合并，只覆盖你写了的字段
+- **新名字追加**：`name` 不在 `ANYROUTER_ACCOUNTS` 里的，追加到列表末尾
+
+例如把 `agGithub` 从会过期的 session cookies 换成邮箱密码登录，其它账号完全不动：
+
+```json
+[{"name": "agGithub", "email": "you@example.com", "password": "your_password"}]
+```
+
+配置位置与 `ANYROUTER_ACCOUNTS` 相同：Settings -> Environments -> production -> Environment secrets。
+
+注意：
+
+- 未在增量里出现的字段（如 `provider`、`api_user`）会保留原值
+- 覆盖后旧条目里的 `cookies` 仍保留在配置中，但脚本优先使用邮箱密码登录，因此不会生效
+- `ANYROUTER_ACCOUNTS_EXTRA` 是**可选**的，不配置时行为与之前完全一致
+- 增量 JSON 格式错误时脚本会直接报错退出，不会静默忽略
+
+### 5. 启用 GitHub Actions
 
 1. 在你的仓库中，点击 "Actions" 选项卡
 2. 如果提示启用 Actions，请点击启用
 3. 找到 "AnyRouter 自动签到" workflow
 4. 点击 "Enable workflow"
 
-### 7. 测试运行
+### 6. 测试运行
 
 你可以手动触发一次签到来测试：
 
@@ -171,45 +143,25 @@ python config/convert_cookie.py
 
 ![运行结果](./assets/check-in.png)
 
-### 本地 HTML 控制台
-
-在本地配置好 `config/cookie.json`、安装依赖，并确保 `gh auth login` 已登录你的 GitHub 账号后运行：
-
-```bash
-uv run local_dashboard.py --repo namejee/anyrouter-check-in
-```
-
-打开 `http://127.0.0.1:8765`，查看两个 AnyRouter 账号的最近余额、10 天到账记录和失败原因。页面支持粘贴 Cookie-Editor 导出的 JSON、Cookie 对象或 Cookie 请求头；点击「更新并验证」会先核对账号身份，再更新本地私有配置、同步 `production` 环境的 `ANYROUTER_ACCOUNTS` Secret，并补跑验证。每次只更新所选账号，另一个账号保持自己的配置。本地的其他平台账号不会加入这份 AnyRouter Secret。
-
-控制台仅监听本机地址，不回显已保存的 Cookie。刷新从 Actions artifact 读取记录，并在 `dashboard_history.json` 合并保留 90 天。可用 `--seed-ledger /path/to/balance_daily.json` 导入此前已核查的历史记录；无记录不推测为未到账。默认从 Cookie 时间戳估算 30 天到期；导出提供到期时间时使用实际导出值，站点仍可能提前撤销登录。Cookie 失效后需重新登录导出，页面不能自动延长账号授权。
-
-超过 24 小时没有新执行时，控制台显示记录过期，并提示自动签到中断；旧任务成功不代表今天已签到。GitHub 拒绝启动并返回 `Actions has been disabled` 时，单独提示平台暂停，与 AnyRouter 的 HTTP 401 登录失效区分。重新启用后出现新的执行记录，平台暂停提示会清除。
-
-GitHub 无法执行时，可在本机临时签到：
-
-```bash
-uv run local_checkin.py
-```
-
-脚本只运行 `config/cookie.json` 中的 AnyRouter 账号，使用本机 Chrome 或已安装的 Playwright Chromium；无须将 Cookie 写入命令或源码。记录保存在忽略提交的 `local_checkin_state/` 并合并到本地控制台，使用 `local:` 前缀标明来源。当天已有增加记录时跳过重复执行，可用 `--force` 再次核验。此命令不会建立新的后台定时任务。
-
 ## 执行时间
 
-- GitHub Actions 目标执行时间：北京时间 08:00、08:30、09:00、12:07、18:30、22:31，每个时间后 10 分钟再补跑一次，共 12 个计划触发点
-- GitHub 的定时触发可能延迟或漏触发；配置了补偿时间也不保证准点。每轮摘要会记录实际北京时间和触发 cron，不能把手动重跑当作新的定时触发
-- 多次执行分散在全天，用于降低 GitHub 定时任务延迟、漏触发或持续数小时故障造成的影响；账号当天已经签到时，后续执行会按成功处理
+- 脚本每天计划执行 3 次：北京时间 **08:10 / 14:10 / 20:10**，都落在 `anyrouter` 的赠送窗口（每天 08:05 之后登录才赠送）之内
+  - `08:10` 主跑，`14:10` / `20:10` 是补跑
+  - `agentrouter` 每天 00:01 的到账不会过期，任一次跑到都能看到
+- **GitHub 的 schedule 实际很不可靠**，实测（09-28 ~ 10-07）：
+  - `UTC 00:10` → 落地 `05:10~05:44`，**稳定晚 5~5.5 小时**（北京 13:30 左右）
+  - `UTC 06:10` → 经常**整次丢弃**
+  - `UTC 12:10` → 基本准点（北京 20:15 左右）
+  - 结果：每天实际只跑到 **1~2 次**，集中在下午和晚上，**早上那次等不到**
+- 曾试过把槽位拉开到 6 小时来改善，**实测无效**，不要据此调排程。真要准点只能用外部定时器直接打 `workflow_dispatch`
+- 好在赠送不会过期，晚跑照样能领到 —— 实测每个账号仍稳定每天 +25
 - 你也可以随时手动触发签到
 
 ## 注意事项
 
 - 请确保每个账号的 cookies 和 API User 都是正确的
-- 每次执行都会在 Actions 摘要和日志中输出各账号的本轮前后余额、额度变化、期间消耗和确认结果，即使余额没有变化也保留明细
-- 同时缓存带时间的上次余额和累计消耗，按账号身份关联；下一轮可直接比较“较上次额度变化”，包括进入浏览器或读取用户信息时已经发放的额度。首次运行或缓存丢失时显示“未读取”，不推测历史数值
-- 额度变化使用原始数值计算，补回期间消耗后再取两位小数；缺失的余额显示“未读取”，不会补成零。余额无变化不等于证明当天已获得奖励
-- 每次执行保留不含凭据的 90 天到账记录，并在摘要显示最近 10 天：当天任一轮有增加就保留“有增加”，后续零变化不会覆盖；跨日增加单独标注。首次启用或缓存丢失的日期显示无记录，不能据此认定未到账。记录通过独立缓存延续，并作为 Actions artifact 归档 90 天
-- 签到接口返回明确成功且签到后余额读取成功，才把该账号计为完成；HTML 验证页和含糊的成功文本不算成功
-- 任意账号签到失败时，任务会标记为失败，便于及时发现 Cookie、API User 或 WAF 状态异常
-- 用户信息接口返回 HTTP 401 时，摘要会明确标注登录失效，并保留最后有效余额的读取时间；需重新登录更新账号 session Cookie，刷新 WAF Cookie 不能恢复账号授权。当天已观察到的到账仍保留“有增加”，同时显示最近一次执行失败
+- 可以在 Actions 页面查看详细的运行日志
+- 支持部分账号失败，只要有账号成功签到，整个任务就不会失败
 - 报 401 错误，请重新获取 cookies，理论 1 个月失效，但有 Bug，详见 [#6](https://github.com/millylee/anyrouter-check-in/issues/6)
 - 请求 200，但出现 Error 1040（08004）：Too many connections，官方数据库问题，目前已修复，但遇到几次了，详见 [#7](https://github.com/millylee/anyrouter-check-in/issues/7)
 
@@ -253,15 +205,13 @@ uv run local_checkin.py
   {
     "name": "AgentRouter 备用",
     "provider": "agentrouter",
-    "credentials": {
-      "username": "你的用户名或邮箱",
-      "password": "你的密码"
-    }
+    "cookies": {
+      "session": "xyz789session"
+    },
+    "api_user": "user456"
   }
 ]
 ```
-
-同一个账号也可以同时配置 `cookies` 和 `credentials`：正常运行优先走 Cookie，Cookie 失效后自动重新登录。
 
 ## 自定义 Provider 配置（可选）
 
@@ -300,7 +250,7 @@ uv run local_checkin.py
 **关于 `bypass_method`**：
 
 - 不设置或设置为 `null`：直接使用用户提供的 cookies 进行请求（适合无 WAF 保护的网站）
-- 设置为 `"waf_cookies"`：使用 Playwright 打开浏览器获取 WAF cookies 后再进行请求（适合有 WAF 保护的网站）
+- 设置为 `"waf_cookies"`：使用 CloakBrowser 打开浏览器获取 WAF cookies 后再进行请求（适合有 WAF 保护的网站）
 
 > 注：`anyrouter` 和 `agentrouter` 已内置默认配置，无需在 `PROVIDERS` 中配置
 
@@ -314,13 +264,12 @@ uv run local_checkin.py
 **字段说明**：
 
 - `domain` (必需)：服务商的域名
-- `login_path` (可选)：登录页面路径，默认为 `/login`
+- `login_path` (可选)：登录页面路径，默认为 `/login`（仅在 `bypass_method` 为 `"waf_cookies"` 时使用）
 - `sign_in_path` (可选)：签到 API 路径，默认为 `/api/user/sign_in`
-- `checkin_on_login` (可选)：设为 `true` 时，打开登录页本身即触发签到，不调用独立签到 API
 - `user_info_path` (可选)：用户信息 API 路径，默认为 `/api/user/self`
 - `api_user_key` (可选)：API 用户标识请求头名称，默认为 `new-api-user`
 - `bypass_method` (可选)：WAF 绕过方法
-  - `"waf_cookies"`：使用 Playwright 打开浏览器获取 WAF cookies 后再执行签到
+  - `"waf_cookies"`：使用 CloakBrowser 打开浏览器获取 WAF cookies 后再执行签到
   - 不设置或 `null`：直接使用用户 cookies 执行签到（适合无 WAF 保护的网站）
 - `waf_cookie_names` (可选)：绕过 WAF 所需 cookie 的名称列表，`bypass_method` 为 `waf_cookies` 时必须设置
 
@@ -344,15 +293,32 @@ uv run local_checkin.py
 - `anyrouter`：
   - `bypass_method: "waf_cookies"`（需要先获取 WAF cookies，然后执行签到）
   - `sign_in_path: "/api/user/sign_in"`
-  - `checkin_on_login: false`（打开登录页刷新 WAF 状态后，显式调用签到接口）
 - `agentrouter`：
-  - `bypass_method: "waf_cookies"`（复用 `acw_tc`，或由 Playwright 获取）
-  - `sign_in_path: null`（查询用户信息/成功登录即完成自动签到）
+  - `bypass_method: "waf_cookies"`（需要获取 `acw_tc`）
+  - `sign_in_path: null`（查询用户信息时自动签到）
+  - `use_proxy: true`
 
 **重要提示**：
 
 - `PROVIDERS` 是可选的，不配置则使用内置的 `anyrouter` 和 `agentrouter`
 - 自定义的 provider 配置会覆盖同名的默认配置
+
+## 代理配置（可选）
+
+内置的 `agentrouter` 默认 `use_proxy: true`。如果你的运行环境访问该平台不稳定，可以在 GitHub Actions 中配置 mihomo 订阅代理。
+
+在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
+
+- `PROXY_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+
+本地运行时也可以直接使用已有代理：
+
+```bash
+CHECKIN_PROXY_URL=http://127.0.0.1:7890
+PROVIDERS={"agentrouter":{"use_proxy":true}}
+```
+
+如果使用订阅脚本，默认会用 `https://www.google.com/generate_204` 测试代理连通性；也可以通过 `PROXY_TEST_URL` 覆盖。
 
 ## 开启通知
 
@@ -426,13 +392,16 @@ uv run local_checkin.py
 # 安装所有依赖
 uv sync --dev
 
-# 安装 Playwright 浏览器
-uv run playwright install chromium
+# 安装 CloakBrowser 浏览器
+uv run python -m cloakbrowser install
+# 如需使用本地浏览器，可设置 CLOAKBROWSER_BINARY_PATH=/path/to/browser
 
 # 创建 .env 文件并配置（注意：JSON 必须是单行格式）
 # 示例：
-# ANYROUTER_ACCOUNTS=[{"name":"账号1","cookies":{"session":"xxx"},"api_user":"12345"}]
+# ANYROUTER_ACCOUNTS=[{"name":"账号1","email":"your@email.com","password":"your_password"}]
 # PROVIDERS={"agentrouter":{"domain":"https://agentrouter.org"}}
+# PROXY_SUBSCRIPTION_URL=https://example.com/sub?token=xxx
+# CHECKIN_PROXY_URL=http://127.0.0.1:7890
 
 # 运行签到脚本
 uv run checkin.py
@@ -443,8 +412,8 @@ uv run checkin.py
 ```bash
 uv sync --dev
 
-# 安装 Playwright 浏览器
-uv run playwright install chromium
+# 浏览器相关测试或本地登录可安装 CloakBrowser，或设置 CLOAKBROWSER_BINARY_PATH 指向本地浏览器
+uv run python -m cloakbrowser install
 
 # 运行测试
 uv run pytest tests/

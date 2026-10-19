@@ -1,101 +1,135 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    # GitHub Actions cron 使用 UTC；下列时点对应北京时间。
-    # 避开整点和半点高峰：08:07、08:37、09:07、12:07、18:37、22:37。
-    # 每个目标后 10 分钟补跑一次；GitHub 定时触发在高负载时可能延迟或漏触发。
-    - cron: '7,17 0,1 * * *'
-    - cron: '37,47 0 * * *'
-    - cron: '7,17 4 * * *'
-    - cron: '37,47 10 * * *'
-    - cron: '37,47 14 * * *'
+    # 四个槽（UTC）：00:10 / 06:10 / 12:10 / 16:10
+    #            = 北京 08:10 / 14:10 / 20:10 / 00:10
+    #
+    # GitHub 的 schedule 会晚几小时，而且**延迟量随槽位变化**（实测 09-28 ~ 10-07）：
+    #   UTC 00:10 -> 北京 13:30 附近（稳定晚 5~5.5 小时）
+    #   UTC 06:10 -> 经常整次丢弃
+    #   UTC 12:10 -> 北京 20:15 附近（基本准点）
+    #   UTC 16:10 -> 北京 03:30 附近
+    # 所以没法靠"把 cron 排到 00:01"来准点 —— 挪了槽位，延迟量也跟着变。
+    #
+    # 改成反过来做：让运行**提前落地**，起来后由 utils/align.py 睡到目标时刻再签到。
+    #   落地在北京 20:15 那次 -> 睡到次日 00:01，只签 agentrouter + mlgb7
+    #   落地在北京 03:30 那次 -> 睡到当日 08:01，只签 anyrouter
+    #   其余时段落地那次     -> 不睡，签全部账号（兜底）
+    # 距目标超过 5 小时时也退回兜底，避免逼近单 job 的 6 小时上限。
+    #
+    # 曾试过"把槽位拉开到 6 小时"来治延迟，实测无效，别再据此调排程。
+    - cron: '10 0,6,12,16 * * *'
   workflow_dispatch:
-
-concurrency:
-  group: anyrouter-check-in-${{ github.ref }}
-  cancel-in-progress: false
+    inputs:
+      providers:
+        description: 只处理这些 provider（逗号分隔，如 agentrouter,mlgb7）；留空 = 全部账号
+        required: false
+        default: ''
+        type: string
+      debug:
+        description: 开启调试模式（截图 artifact、详细日志）
+        required: false
+        default: false
+        type: boolean
+      force:
+        description: 强制重跑今天已签到的账号（日常不要开，会被站点二次登录限流）
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   checkin:
-    runs-on: windows-2025
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
     environment: production
     env:
       PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: 1
+      DEBUG_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug == 'true' && 'true' || 'false' }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
-    - uses: astral-sh/setup-uv@v3
+    - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
       with:
         version: "latest"
 
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v6
       with:
         python-version: '3.11'
 
     - name: 缓存 UV 依赖
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       id: uv-cache
       with:
-        path: |
-          ~/.cache/uv
-          .venv
+        path: ~/.cache/uv
         key: ${{ runner.os }}-uv-${{ hashFiles('pyproject.toml', 'uv.lock') }}
         restore-keys: |
           ${{ runner.os }}-uv-
 
     - name: 安装依赖
-      if: steps.uv-cache.outputs.cache-hit != 'true'
       run: |
-        echo "缓存未命中，开始安装项目依赖..."
-        uv sync
+        uv sync --frozen
         echo "✅ 环境初始化完成"
 
-    - name: 获取 Playwright 版本
-      id: playwright-version
-      run: |
-        $version = uv run python -c "import importlib.metadata; print(importlib.metadata.version('playwright'))"
-        echo "version=$version" >> $env:GITHUB_OUTPUT
-        echo "Playwright version: $version"
+    - name: 对齐到北京时间目标时刻
+      env:
+        # 手动触发时若指定了 providers，则跳过对齐、直接用指定的范围
+        MANUAL_PROVIDERS: ${{ github.event.inputs.providers }}
+        # 距目标超过这么久就不睡了（单 job 上限 6 小时，留足余量）
+        ALIGN_MAX_SLEEP_SECONDS: '18000'
+      run: uv run python -m utils.align
 
-    - name: 缓存 Playwright 浏览器
-      uses: actions/cache@v4
-      id: playwright-cache
+    - name: 安装系统依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb fonts-noto-color-emoji fonts-freefont-ttf fonts-unifont \
+          fonts-ipafont-gothic fonts-wqy-zenhei fonts-tlwg-loma-otf
+
+    - name: 缓存 CloakBrowser 二进制
+      uses: actions/cache@v5
+      id: cloakbrowser-cache
       with:
-        path: ~\AppData\Local\ms-playwright
-        key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+        path: ~/.cloakbrowser
+        key: ${{ runner.os }}-cloakbrowser-v1
         restore-keys: |
-          ${{ runner.os }}-playwright-
+          ${{ runner.os }}-cloakbrowser-
 
-    - name: 安装 Playwright 浏览器
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
+    - name: 安装 CloakBrowser
       run: |
-        echo "缓存未命中，开始安装 Playwright 浏览器..."
-        uv run playwright install chromium --with-deps
+        uv run python -m cloakbrowser install
+        echo "✅ CloakBrowser 安装完成"
 
     - name: 恢复余额历史缓存
-      id: balance-cache-restore
-      uses: actions/cache/restore@v4
+      uses: actions/cache@v5
       with:
         path: |
           balance_hash.txt
-          balance_history.json
-        key: balance-hash-${{ github.run_id }}-${{ github.run_attempt }}
+          checkin_state.json
+        key: balance-hash-${{ github.ref_name }}-${{ github.run_id }}
         restore-keys: |
+          balance-hash-${{ github.ref_name }}-
           balance-hash-
 
-    - name: 恢复每日到账记录
-      uses: actions/cache/restore@v4
-      with:
-        path: balance_daily.json
-        key: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
-        restore-keys: |
-          balance-daily-
+    - name: 配置代理
+      env:
+        PROXY_SUBSCRIPTION_URL: ${{ secrets.PROXY_SUBSCRIPTION_URL }}
+        PROXY_TEST_URL: https://www.google.com/generate_204
+        MIHOMO_VERSION: v1.19.27
+        PROXY_REQUIRED: false
+      run: bash scripts/setup_mihomo_proxy.sh
 
     - name: 执行签到
-      id: checkin
       env:
+        DEBUG_MODE: ${{ env.DEBUG_MODE }}
+        # 今天已成功签到的账号默认跳过（schedule 槽位延迟会导致同一批号一天被触发两三次，
+        # 重复签到会被站点按二次登录挡掉）。排查时手动勾 force 才重跑。
+        CHECKIN_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '' }}
+        # CHECKIN_PROVIDERS 由上一步「对齐到北京时间目标时刻」通过 $GITHUB_ENV 写入
+        # （手动触发时它会把 providers 输入原样透传），这里不要再写死，否则会覆盖。
+        CHECKIN_HEADLESS: false
+        CHECKIN_HUMANIZE: true
+        CHECKIN_WAIT_TIMEOUT_MS: 120000
         ANYROUTER_ACCOUNTS: ${{ secrets.ANYROUTER_ACCOUNTS }}
+        ANYROUTER_ACCOUNTS_EXTRA: ${{ secrets.ANYROUTER_ACCOUNTS_EXTRA }}
         PROVIDERS: ${{ secrets.PROVIDERS }}
         DINGDING_WEBHOOK: ${{ secrets.DINGDING_WEBHOOK }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
@@ -115,44 +149,59 @@ jobs:
         BARK_KEY: ${{ secrets.BARK_KEY }}
         BARK_SERVER: ${{ secrets.BARK_SERVER }}
       run: |
-        uv run checkin.py
+        xvfb-run -a --server-args="-screen 0 1920x1080x24" uv run python - <<'PY'
+        import json
+        import os
+        import runpy
 
-    - name: 保存余额历史缓存
-      if: always() && hashFiles('balance_hash.txt') != ''
-      uses: actions/cache/save@v4
-      with:
-        path: |
-          balance_hash.txt
-          balance_history.json
-        key: balance-hash-${{ github.run_id }}-${{ github.run_attempt }}
+        # 兼容旧 Secrets 中的域名写法；仅在进程内转换，不回写凭据。
+        aliases = {'anyrouter.top': 'anyrouter', 'agentrouter.org': 'agentrouter'}
+        for key in ('ANYROUTER_ACCOUNTS', 'ANYROUTER_ACCOUNTS_EXTRA'):
+            raw = os.environ.get(key, '').strip()
+            if not raw:
+                continue
+            accounts = json.loads(raw)
+            if not isinstance(accounts, list) or any(not isinstance(item, dict) for item in accounts):
+                raise SystemExit(f'{key} must be a JSON array of account objects')
+            for account in accounts:
+                provider = account.get('provider', 'anyrouter')
+                host = provider.lower().removeprefix('https://').removeprefix('http://').rstrip('/')
+                if host in aliases:
+                    account['provider'] = aliases[host]
+                for field in ('email', 'password', 'cookies'):
+                    value = account.get(field)
+                    values = value.values() if isinstance(value, dict) else [value]
+                    for secret in values:
+                        if secret:
+                            escaped = str(secret).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                            print(f'::add-mask::{escaped}', flush=True)
+            os.environ[key] = json.dumps(accounts)
+        runpy.run_path('checkin.py', run_name='__main__')
+        PY
 
-    - name: 保存每日到账记录
-      if: always() && hashFiles('balance_daily.json') != ''
-      uses: actions/cache/save@v4
-      with:
-        path: balance_daily.json
-        key: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
-
-    - name: 归档到账记录（不含凭据）
-      if: always() && hashFiles('balance_daily.json') != ''
+    - name: 上传调试截图
+      if: always() && env.DEBUG_MODE == 'true'
+      env:
+        HTTP_PROXY: ''
+        HTTPS_PROXY: ''
       uses: actions/upload-artifact@v4
       with:
-        name: balance-daily-${{ github.run_id }}-${{ github.run_attempt }}
-        path: balance_daily.json
-        retention-days: 90
+        name: checkin-screenshots-${{ github.run_id }}
+        path: checkin_screenshots/
+        if-no-files-found: warn
+        include-hidden-files: true
+        retention-days: 14
+
+    - name: 停止代理
+      if: always()
+      run: bash scripts/stop_mihomo_proxy.sh
 
     - name: 执行结果
       if: always()
       run: |
         echo "签到任务执行完成"
-        echo "时间: $(Get-Date)"
-        echo "触发方式: ${{ github.event_name }}; UTC cron: ${{ github.event.schedule }}" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-        if ("${{ steps.checkin.outcome }}" -ne "success") {
-          echo "签到脚本报告失败，workflow 将标记为失败。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "- 上方明细区分登录失效、余额读取失败和签到未确认" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "- 登录失效（HTTP 401）需要重新登录并更新账号 session Cookie；仅刷新 WAF Cookie 无法恢复登录" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-          echo "- 查看 '执行签到' 步骤日志获取具体失败原因" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-        } else {
-          echo "全部账号执行及余额读取完成；本轮明细见上表。" | Tee-Object -FilePath $env:GITHUB_STEP_SUMMARY -Append
-        }
+        echo "时间: $(date)"
+        if [ "${DEBUG_MODE}" = "true" ] && [ -d checkin_screenshots ] && [ "$(ls -A checkin_screenshots 2>/dev/null)" ]; then
+          echo "调试截图已上传为 artifact: checkin-screenshots-${{ github.run_id }}"
+          ls -la checkin_screenshots/
+        fi
