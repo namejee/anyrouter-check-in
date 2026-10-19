@@ -139,14 +139,16 @@
 
 1. 在 "Actions" 选项卡中，点击 "AnyRouter 自动签到"
 2. 点击 "Run workflow" 按钮
-3. 确认运行
+3. 在 `providers` 填入 `anyrouter,agentrouter`，立即执行；`debug` 和 `force` 保持关闭
+4. 确认运行
 
 ![运行结果](./assets/check-in.png)
 
 ## 执行时间
 
-- 脚本每天计划执行 3 次：北京时间 **08:10 / 14:10 / 20:10**，都落在 `anyrouter` 的赠送窗口（每天 08:05 之后登录才赠送）之内
-  - `08:10` 主跑，`14:10` / `20:10` 是补跑
+- 脚本每天计划触发 4 次：北京时间 **00:10 / 08:10 / 14:10 / 20:10**
+  - `00:10` 覆盖 AgentRouter 的新签到日；AnyRouter 以 `08:10` 主跑，`14:10` / `20:10` 补跑
+  - 实际执行沿用上游的签到窗口对齐逻辑，可能等待到目标窗口；GitHub 定时触发也可能延迟
   - `agentrouter` 每天 00:01 的到账不会过期，任一次跑到都能看到
 - **GitHub 的 schedule 实际很不可靠**，实测（09-28 ~ 10-07）：
   - `UTC 00:10` → 落地 `05:10~05:44`，**稳定晚 5~5.5 小时**（北京 13:30 左右）
@@ -310,6 +312,7 @@
 在仓库 Settings -> Environments -> production -> Environment secrets 中添加：
 
 - `PROXY_SUBSCRIPTION_URL`：Clash/Mihomo 订阅链接。设置后，workflow 会运行 `scripts/setup_mihomo_proxy.sh`，启动本地代理并写入 `CHECKIN_PROXY_URL`。
+- `FIXED_PROXY_URL`：固定 HTTP(S)／SOCKS5 代理地址，例如 `socks5://user:password@host:port`。通过同一个 mihomo 服务转接，优先于订阅；配置方法见 [部署说明](DEPLOYMENT.md)。
 
 本地运行时也可以直接使用已有代理：
 
