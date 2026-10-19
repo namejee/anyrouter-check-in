@@ -1,24 +1,8 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    # 四个槽（UTC）：00:10 / 06:10 / 12:10 / 16:10
-    #            = 北京 08:10 / 14:10 / 20:10 / 00:10
-    #
-    # GitHub 的 schedule 会晚几小时，而且**延迟量随槽位变化**（实测 09-28 ~ 10-07）：
-    #   UTC 00:10 -> 北京 13:30 附近（稳定晚 5~5.5 小时）
-    #   UTC 06:10 -> 经常整次丢弃
-    #   UTC 12:10 -> 北京 20:15 附近（基本准点）
-    #   UTC 16:10 -> 北京 03:30 附近
-    # 所以没法靠"把 cron 排到 00:01"来准点 —— 挪了槽位，延迟量也跟着变。
-    #
-    # 改成反过来做：让运行**提前落地**，起来后由 utils/align.py 睡到目标时刻再签到。
-    #   落地在北京 20:15 那次 -> 睡到次日 00:01，只签 agentrouter + mlgb7
-    #   落地在北京 03:30 那次 -> 睡到当日 08:01，只签 anyrouter
-    #   其余时段落地那次     -> 不睡，签全部账号（兜底）
-    # 距目标超过 5 小时时也退回兜底，避免逼近单 job 的 6 小时上限。
-    #
-    # 曾试过"把槽位拉开到 6 小时"来治延迟，实测无效，别再据此调排程。
-    - cron: '10 0,6,12,16 * * *'
+    # UTC 00:03 = 每天北京时间 08:03；GitHub 实际启动可能延迟。
+    - cron: '3 0 * * *'
   workflow_dispatch:
     inputs:
       providers:
@@ -71,14 +55,6 @@ jobs:
         uv sync --frozen
         echo "✅ 环境初始化完成"
 
-    - name: 对齐到北京时间目标时刻
-      env:
-        # 手动触发时若指定了 providers，则跳过对齐、直接用指定的范围
-        MANUAL_PROVIDERS: ${{ github.event.inputs.providers }}
-        # 距目标超过这么久就不睡了（单 job 上限 6 小时，留足余量）
-        ALIGN_MAX_SLEEP_SECONDS: '18000'
-      run: uv run python -m utils.align
-
     - name: 安装系统依赖
       run: |
         sudo apt-get update
@@ -117,14 +93,31 @@ jobs:
         PROXY_REQUIRED: ${{ (secrets.FIXED_PROXY_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '') && 'true' || 'false' }}
       run: bash scripts/setup_mihomo_proxy.sh
 
+    - name: 等待 AnyRouter 奖励窗口（仅定时任务）
+      if: github.event_name == 'schedule'
+      run: |
+        python - <<'PY'
+        import time
+        from datetime import datetime, timedelta, timezone
+
+        # 维护版注明 AnyRouter 在北京时间 08:05 后登录才发放奖励。
+        # 08:03 触发时最多等三分钟；环境准备较慢或排队延迟时直接继续。
+        now = datetime.now(timezone(timedelta(hours=8)))
+        start = now.replace(hour=8, minute=3, second=0, microsecond=0)
+        target = now.replace(hour=8, minute=6, second=0, microsecond=0)
+        wait = (target - now).total_seconds() if start <= now < target else 0
+        print(f'北京时间 {now:%Y-%m-%d %H:%M:%S}；奖励窗口等待 {wait:.0f} 秒', flush=True)
+        if wait > 0:
+            time.sleep(wait)
+        PY
+
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
-        # 今天已成功签到的账号默认跳过（schedule 槽位延迟会导致同一批号一天被触发两三次，
-        # 重复签到会被站点按二次登录挡掉）。排查时手动勾 force 才重跑。
+        # 已确认到账的账号默认跳过；排查时手动勾 force 才重跑。
         CHECKIN_FORCE: ${{ github.event.inputs.force == 'true' && '1' || '' }}
-        # CHECKIN_PROVIDERS 由上一步「对齐到北京时间目标时刻」通过 $GITHUB_ENV 写入
-        # （手动触发时它会把 providers 输入原样透传），这里不要再写死，否则会覆盖。
+        # 定时任务处理全部账号；手动运行可按 providers 收窄范围。
+        CHECKIN_PROVIDERS: ${{ github.event.inputs.providers }}
         CHECKIN_HEADLESS: false
         CHECKIN_HUMANIZE: true
         CHECKIN_WAIT_TIMEOUT_MS: 120000
