@@ -43,6 +43,7 @@
 ## 部署适配
 
 - Actions 启动时将旧 Secret 中的 `anyrouter.top`／`agentrouter.org`（含协议和尾斜杠的写法）转换为上游的 `anyrouter`／`agentrouter`，不改写 GitHub Secrets。
+- 移除旧账号配置中的 WAF Cookie（`acw_tc`、`cdn_sec_tc`、`acw_sc__v2`），使用上游本次运行新获取的值；保留 session 等登录凭据。
 - 启动时为密码、邮箱和 Cookie 注册日志遮罩。
 - 不上传浏览器登录 Profile 到 Actions 公共缓存；本方案的 AnyRouter Cookie 模式与 AgentRouter 非持久登录不需要该缓存。
 

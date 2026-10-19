@@ -175,6 +175,17 @@ jobs:
                         if secret:
                             escaped = str(secret).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                             print(f'::add-mask::{escaped}', flush=True)
+                # 旧配置中的 WAF Cookie 会覆盖上游本次新获取的值，只保留登录凭据。
+                if account.get('provider', 'anyrouter') in ('anyrouter', 'agentrouter'):
+                    waf_names = {'acw_tc', 'cdn_sec_tc', 'acw_sc__v2'}
+                    cookies = account.get('cookies')
+                    if isinstance(cookies, dict):
+                        account['cookies'] = {k: v for k, v in cookies.items() if k not in waf_names}
+                    elif isinstance(cookies, str):
+                        account['cookies'] = '; '.join(
+                            part.strip() for part in cookies.split(';')
+                            if part.split('=', 1)[0].strip() not in waf_names and part.strip()
+                        )
             os.environ[key] = json.dumps(accounts)
         runpy.run_path('checkin.py', run_name='__main__')
         PY
