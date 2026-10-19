@@ -42,6 +42,7 @@
 
 ## 部署适配
 
+- 固定使用 Ubuntu 24.04，避免 `ubuntu-latest` 迁移系统版本改变浏览器运行环境。
 - Actions 启动时将旧 Secret 中的 `anyrouter.top`／`agentrouter.org`（含协议和尾斜杠的写法）转换为上游的 `anyrouter`／`agentrouter`，不改写 GitHub Secrets。
 - 移除旧账号配置中的 WAF Cookie（`acw_tc`、`cdn_sec_tc`、`acw_sc__v2`），使用上游本次运行新获取的值；保留 session 等登录凭据。
 - 启动时为密码、邮箱和 Cookie 注册日志遮罩。
