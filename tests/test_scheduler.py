@@ -32,6 +32,12 @@ def test_green_run_with_anyrouter_not_credited_requires_retry():
 	assert not log_health(sample_logs(any_increment='未到账'))['healthy']
 
 
+def test_agentrouter_login_without_a_known_daily_increase_requires_retry():
+	result = log_health(sample_logs(agent_summary='未到账(较10-19)'))
+	assert not result['healthy']
+	assert result['agentrouter_uncredited'] == 2
+
+
 def test_missing_account_and_failed_account_cannot_be_healthy():
 	assert not log_health(sample_logs().split('\n', 2)[2])['healthy']
 	assert not log_health(sample_logs() + '\n2026-10-20T01:00:00Z [FAILED] Account 0: timeout')['healthy']

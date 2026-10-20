@@ -110,17 +110,22 @@ def log_health(raw, expected=4):
 				summaries[name] = line
 	missing = set(providers) - set(summaries)
 	uncredited = 0
+	agent_uncredited = 0
 	for name, line in summaries.items():
+		gain = re.search(r' · \+\$([\d.]+)', line)
+		has_increase = bool(gain and float(gain[1]) > 0)
 		if providers[name] == 'anyrouter':
-			gain = re.search(r' · \+\$([\d.]+)', line)
-			if not gain or float(gain[1]) <= 0:
+			if not has_increase:
 				uncredited += 1
+		elif providers[name] == 'agentrouter' and '基线待建立' not in line and not has_increase:
+			agent_uncredited += 1
 	account_count = len(set(providers) | skipped)
 	return {
-		'healthy': account_count == expected and not missing and not uncredited and not failed,
+		'healthy': account_count == expected and not missing and not uncredited and not agent_uncredited and not failed,
 		'accounts': account_count,
 		'missing_summaries': len(missing),
 		'anyrouter_uncredited': uncredited,
+		'agentrouter_uncredited': agent_uncredited,
 		'unconfirmed_baselines': sum('基线待建立' in line for line in summaries.values()),
 	}
 
