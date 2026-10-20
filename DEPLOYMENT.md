@@ -84,6 +84,15 @@ systemctl start anyrouter-scheduler.service
 检查器的 `--probe` 用于验证服务器到 GitHub Runner 的完整触发链路。
 `--inspect` 只检查运行和日志，不提交任务，也不把检查结果保存为当天完成。
 
+### 2026-10-20 部署验收
+
+- 香港服务器的 timer 已设置为开机启用并处于 active，系统时钟同步正常；服务以 systemd 临时用户运行，凭据文件由 root 持有、权限为 0600。
+- 服务器在北京时间 10:24 检查了当日真实签到日志，识别四个账号结果和两个 AnyRouter 的额度增加；两个 AgentRouter 的首次基准仍标记为未确认新增奖励。
+- 服务器发起的[无账号连通性验证](https://github.com/namejee/anyrouter-check-in/actions/runs/39358859106)在 GitHub Runner 上完成，结论 success。
+- 北京时间 10:26:46 的临时定时唤起测试成功，检查器识别当天已完成，没有重复登录账号；临时测试单元自动回收。
+- 单元测试 144 项通过、1 项跳过；服务器与仓库的检查器文件校验和一致。
+- 验收时，首个北京时间 08:03 的主触发时刻为 2026-10-21；之后由服务器每日触发并检查，GitHub 08:18 定时作为备用。
+
 ## 部署适配
 
 - 固定使用 Ubuntu 24.04，避免 `ubuntu-latest` 迁移系统版本改变浏览器运行环境。
