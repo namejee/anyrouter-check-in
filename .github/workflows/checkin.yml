@@ -21,9 +21,14 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: checkin-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   checkin:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     environment: production
     env:
       PYTHONIOENCODING: utf-8
