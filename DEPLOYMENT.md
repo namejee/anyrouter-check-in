@@ -8,7 +8,7 @@
 
 - AnyRouter：保留 `production` 环境中已有的 `ANYROUTER_ACCOUNTS`，继续使用登录后的 Cookie 和 `api_user`。手动通过 GitHub 或 Linux.do 登录取得 Cookie，Cookie 失效时需要更新。
 - AgentRouter：使用 AgentRouter 自身的用户名／邮箱和密码，每次通过浏览器重新登录。这里不填 GitHub 或 Linux.do 的密码。
-- GitHub Actions 自动运行，不需要单独的服务器。定时触发可能延迟，以实际运行记录为准。
+- 签到在 GitHub Actions 中执行；香港服务器独立负责每天 08:03 触发、检查和有限补跑。GitHub 自带定时作为备用。
 
 ## 添加 AgentRouter
 
@@ -40,7 +40,7 @@
 选择 Run workflow，`providers` 填 `anyrouter,agentrouter`，其余保持默认。
 手动测试直接处理指定范围，不执行上游的长时间窗口对齐。
 
-每天计划北京时间 **08:03** 触发一次，UTC cron 为 `3 0 * * *`；处理全部账号。
+香港服务器每天北京时间 **08:03** 主触发，GitHub 在 **08:18** 备用触发（UTC cron `18 0 * * *`）；处理全部账号。
 环境准备完成后立即签到，不额外等待固定时刻。
 上游最长数小时的窗口对齐步骤已移除，GitHub 实际启动仍可能延迟。
 查看每个账号的结果和余额变化，不能只凭整个任务的绿色状态判断全部账号成功。
@@ -49,6 +49,40 @@
 部署后的[四账号实测记录](https://github.com/namejee/anyrouter-check-in/actions/runs/39283870327)：
 两个 AnyRouter 账号取得服务端签到回执并读取余额；两个 AgentRouter 账号通过密码重新登录，
 并成功验证用户信息和读取余额。AgentRouter 首次建立余额基线，不据此声称新增了某个固定金额的奖励。
+
+2026-10-20 北京时间 09:21 的[补跑记录](https://github.com/namejee/anyrouter-check-in/actions/runs/39352704004)中，
+两个 AnyRouter 账号各增加 $25；两个 AgentRouter 账号重新登录成功，总额度与凌晨相比未变，
+当天仍缺少 AgentRouter 的前日基线，不能据此确认其当日新增奖励。
+
+## 独立服务器定时器
+
+目标服务器：SSH 别名 `codex-srv-hk`。
+`deploy/systemd/anyrouter-scheduler.timer` 明确使用 UTC，
+每天北京时间 08:03 开始，到 20:48 每 15 分钟运行一次检查器。
+准备环境后立即签到，不增加 08:06 等待。
+
+- 检查器：`/opt/anyrouter-scheduler/scheduler.py`，仅依赖服务器 Python 3.11 标准库。
+- 凭据：`/etc/anyrouter-scheduler/github-token`，仅 root 可读，通过 systemd LoadCredential 提供给临时服务用户。
+- GitHub 凭据仅授权本仓库的 Actions 读写和必需的 Metadata 读取；不授予代码或 Secrets 管理权限。
+- 站点账号、密码、Cookie 和代理仍保留在 GitHub production 环境中。
+- 每天只认 08:03 后创建的运行；检查四账号摘要，AnyRouter 未确认增加额度时继续补跑。
+- 有任务运行时不重复提交；补跑间隔至少 30 分钟，每天最多提交三次。已到账的账号由原签到脚本跳过。
+- 确认成功后当天只读本地状态；次日自动重新检查。网络故障和认证失败会保留在服务日志。
+- 日志只记录运行编号、检查计数和动作，不打印令牌、原始响应或带签名的日志下载链接。
+- 主工作流串行执行，单次限时 30 分钟，避免并发登录或单次卡住占用全天。
+
+运维命令：
+
+```bash
+systemctl list-timers anyrouter-scheduler.timer
+systemctl status anyrouter-scheduler.service
+journalctl -u anyrouter-scheduler.service --since today
+systemctl start anyrouter-scheduler.service
+```
+
+连通性验证工作流 `scheduler-probe.yml` 仅输出时间，不读取站点 Secrets、不登录账号；
+检查器的 `--probe` 用于验证服务器到 GitHub Runner 的完整触发链路。
+`--inspect` 只检查运行和日志，不提交任务，也不把检查结果保存为当天完成。
 
 ## 部署适配
 

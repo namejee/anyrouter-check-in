@@ -1,0 +1,27 @@
+[Unit]
+Description=Verify daily AnyRouter and AgentRouter check-in and dispatch missing runs
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+StateDirectory=anyrouter-scheduler
+StateDirectoryMode=0700
+LoadCredential=github-token:/etc/anyrouter-scheduler/github-token
+Environment=WATCHDOG_REPO=namejee/anyrouter-check-in
+Environment=WATCHDOG_EXPECTED_ACCOUNTS=4
+ExecStart=/usr/bin/python3 /opt/anyrouter-scheduler/scheduler.py
+TimeoutStartSec=5min
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+

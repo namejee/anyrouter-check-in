@@ -1,0 +1,13 @@
+[Unit]
+Description=Beijing 08:03 daily check-in, then verify every fifteen minutes until 20:48
+
+[Timer]
+OnCalendar=*-*-* 00..12:03,18,33,48:00 UTC
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=anyrouter-scheduler.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,8 +1,9 @@
 name: AnyRouter 自动签到
 on:
   schedule:
-    # UTC 00:03 = 每天北京时间 08:03；GitHub 实际启动可能延迟。
-    - cron: '3 0 * * *'
+    # 香港服务器每天北京时间 08:03 主触发；这里在 08:18 备用触发。
+    # UTC 00:18 = 北京时间 08:18；GitHub 实际启动可能延迟。
+    - cron: '18 0 * * *'
   workflow_dispatch:
     inputs:
       providers:

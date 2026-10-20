@@ -1,0 +1,16 @@
+name: 签到定时器连通性验证
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: 确认外部触发到达 GitHub Runner
+      run: |
+        echo "Independent scheduler dispatch reached GitHub Actions."
+        date -u '+UTC %Y-%m-%d %H:%M:%S'
