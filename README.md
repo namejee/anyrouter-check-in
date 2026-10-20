@@ -147,7 +147,7 @@
 ## 执行时间
 
 - 每天计划在北京时间 **08:03** 触发一次，对应 UTC cron `3 0 * * *`。
-- 维护版注明 AnyRouter 在 08:05 后登录才发放奖励；若环境提前准备完成，则等到 **08:06** 再执行，最多等待三分钟。延迟启动时直接执行，手动运行不等待。
+- 环境准备完成后立即签到，不额外等待固定时刻。
 - 每轮处理当前配置的全部账号，已确认当天到账的账号按上游逻辑跳过。
 - 已移除上游最长数小时的窗口对齐等待。
 - GitHub 高负载时可能延迟或丢弃定时事件，平台不保证准点启动，见 [GitHub 官方说明](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)。

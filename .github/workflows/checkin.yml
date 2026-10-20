@@ -93,24 +93,6 @@ jobs:
         PROXY_REQUIRED: ${{ (secrets.FIXED_PROXY_URL != '' || secrets.PROXY_SUBSCRIPTION_URL != '') && 'true' || 'false' }}
       run: bash scripts/setup_mihomo_proxy.sh
 
-    - name: 等待 AnyRouter 奖励窗口（仅定时任务）
-      if: github.event_name == 'schedule'
-      run: |
-        python - <<'PY'
-        import time
-        from datetime import datetime, timedelta, timezone
-
-        # 维护版注明 AnyRouter 在北京时间 08:05 后登录才发放奖励。
-        # 08:03 触发时最多等三分钟；环境准备较慢或排队延迟时直接继续。
-        now = datetime.now(timezone(timedelta(hours=8)))
-        start = now.replace(hour=8, minute=3, second=0, microsecond=0)
-        target = now.replace(hour=8, minute=6, second=0, microsecond=0)
-        wait = (target - now).total_seconds() if start <= now < target else 0
-        print(f'北京时间 {now:%Y-%m-%d %H:%M:%S}；奖励窗口等待 {wait:.0f} 秒', flush=True)
-        if wait > 0:
-            time.sleep(wait)
-        PY
-
     - name: 执行签到
       env:
         DEBUG_MODE: ${{ env.DEBUG_MODE }}
